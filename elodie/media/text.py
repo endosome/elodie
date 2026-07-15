@@ -181,7 +181,7 @@ class Text(Base):
             metadata_line[name] = kwargs[name]
 
         metadata_as_json = dumps(metadata_line)
-        
+
         # Create an _original copy just as we do with exiftool
         # This is to keep all file processing logic in line with exiftool
         copy2(source, source + '_original')
@@ -189,16 +189,16 @@ class Text(Base):
         if has_metadata:
             # Update the first line of this file in place
             # http://stackoverflow.com/a/14947384
-            with open(source, 'r') as f_read:
+            with open(source, 'r', encoding='utf-8', errors='replace') as f_read:
                 f_read.readline()
-                with open(source, 'w') as f_write:
+                with open(source, 'w', encoding='utf-8', errors='replace') as f_write:
                     f_write.write("{}\n".format(metadata_as_json))
                     copyfileobj(f_read, f_write)
         else:
             # Prepend the metadata to the file
-            with open(source, 'r') as f_read:
+            with open(source, 'r', encoding='utf-8', errors='replace') as f_read:
                 original_contents = f_read.read()
-                with open(source, 'w') as f_write:
+                with open(source, 'w', encoding='utf-8', errors='replace') as f_write:
                     f_write.write("{}\n{}".format(
                         metadata_as_json,
                         original_contents)

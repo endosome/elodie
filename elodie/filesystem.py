@@ -6,6 +6,9 @@ General file system methods.
 from __future__ import print_function
 from builtins import object
 
+import datetime
+import calendar
+
 import os
 import re
 import shutil
@@ -57,7 +60,7 @@ class FileSystem(object):
             else:
                 print(f"[DRY-RUN] Would {operation_type}: {src}")
             return True  # Simulate success
-        
+
         # Perform actual operation
         if operation_type == 'move':
             shutil.move(src, dst)
@@ -123,7 +126,7 @@ class FileSystem(object):
         compiled_regex_list = [re.compile(regex) for regex in exclude_regex_list]
         for dirname, dirnames, filenames in os.walk(path):
             for filename in filenames:
-                # If file extension is in `extensions` 
+                # If file extension is in `extensions`
                 # And if file path is not in exclude regexes
                 # Then append to the list
                 filename_path = os.path.join(dirname, filename)
@@ -201,11 +204,11 @@ class FileSystem(object):
                     if metadata[part]:
                         this_value = os.path.splitext(metadata['original_name'])[0]
                     else:
-                        # We didn't always store original_name so this is 
+                        # We didn't always store original_name so this is
                         #  for backwards compatability.
-                        # We want to remove the hardcoded date prefix we used 
+                        # We want to remove the hardcoded date prefix we used
                         #  to add to the name.
-                        # This helps when re-running the program on file 
+                        # This helps when re-running the program on file
                         #  which were already processed.
                         this_value = re.sub(
                             '^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-',
@@ -565,7 +568,7 @@ class FileSystem(object):
         directory_name = self.get_folder_path(metadata)
         dest_directory = os.path.join(destination, directory_name)
         file_name = self.get_file_name(metadata)
-        dest_path = os.path.join(dest_directory, file_name)        
+        dest_path = os.path.join(dest_directory, file_name)
 
         media.set_original_name()
 
@@ -610,7 +613,7 @@ class FileSystem(object):
             else:
                 self._file_operation('copy', _file, dest_path)
 
-            # Set the utime based on what the original file contained 
+            # Set the utime based on what the original file contained
             #  before we made any changes.
             # Then set the utime on the destination file based on metadata.
             if not constants.dry_run:
@@ -661,7 +664,16 @@ class FileSystem(object):
         else:
             # We don't make any assumptions about time zones and
             # assume local time zone.
-            date_taken_in_seconds = time.mktime(date_taken)
+            dt = datetime.datetime(
+                date_taken.tm_year,
+                date_taken.tm_mon,
+                date_taken.tm_mday,
+                date_taken.tm_hour,
+                date_taken.tm_min,
+                date_taken.tm_sec,
+            )
+
+            date_taken_in_seconds = calendar.timegm(dt.timetuple())
             if not constants.dry_run:
                 os.utime(file_path, (time.time(), (date_taken_in_seconds)))
             else:

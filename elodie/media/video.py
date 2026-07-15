@@ -9,7 +9,7 @@ from __future__ import absolute_import
 from __future__ import division
 
 # load modules
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import os
 import re
@@ -100,4 +100,12 @@ class Video(Media):
         if(seconds_since_epoch == 0):
             return None
 
+        if seconds_since_epoch < 0:
+            # Windows cannot handle negative timestamps with time.gmtime
+            # Windows-safe handling of negative timestamps
+            epoch = datetime(1970, 1, 1)
+            dt = epoch + timedelta(seconds=seconds_since_epoch)
+            print_red(self.source)
+            print_red(dt.timetuple())
+            return dt.timetuple()
         return time.gmtime(seconds_since_epoch)

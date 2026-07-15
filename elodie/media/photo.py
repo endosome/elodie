@@ -10,7 +10,7 @@ from __future__ import absolute_import
 import os
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from re import compile
 
 from PIL import Image
@@ -82,7 +82,16 @@ class Photo(Media):
         if(seconds_since_epoch == 0):
             return None
 
+        if seconds_since_epoch < 0:
+            # Windows cannot handle negative timestamps with time.gmtime
+            # Windows-safe handling of negative timestamps
+            epoch = datetime(1970, 1, 1)
+            dt = epoch + timedelta(seconds=seconds_since_epoch)
+            print_red(self.source)
+            print_red(dt.timetuple())
+            return dt.timetuple()
         return time.gmtime(seconds_since_epoch)
+
 
     def is_valid(self):
         """Check the file extension against valid file extensions.
@@ -109,5 +118,5 @@ class Photo(Media):
                     return False
             except IOError:
                 return False
-        
+
         return extension in self.extensions

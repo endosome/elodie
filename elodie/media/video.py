@@ -105,7 +105,5 @@ class Video(Media):
             # Windows-safe handling of negative timestamps
             epoch = datetime(1970, 1, 1)
             dt = epoch + timedelta(seconds=seconds_since_epoch)
-            print_red(self.source)
-            print_red(dt.timetuple())
             return dt.timetuple()
         return time.gmtime(seconds_since_epoch)

@@ -182,6 +182,12 @@ def exiftool_place_name(lat, lon):
     return None
 
 
+#: Placeholder value shipped in config.ini-sample. A config.ini that still
+#: has this value has never had a real MapQuest key configured, so it should
+#: be treated the same as no key at all (falling back to ExifTool).
+__PLACEHOLDER_KEY__ = 'your-api-key-goes-here'
+
+
 def get_key():
     global __KEY__
     if __KEY__ is not None:
@@ -195,7 +201,11 @@ def get_key():
     if('MapQuest' not in config):
         return None
 
-    __KEY__ = config['MapQuest']['key']
+    key = config['MapQuest']['key']
+    if not key or key == __PLACEHOLDER_KEY__:
+        return None
+
+    __KEY__ = key
     return __KEY__
 
 def get_prefer_english_names():

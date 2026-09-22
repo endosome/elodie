@@ -81,3 +81,29 @@ def test_calls_print_progress_with_new_line(fake_log):
     fake_log.warn.return_value = expected
     fake_log.error.return_value = expected
     call_log_and_assert(log.progress, [expected, True], with_new_line(expected))
+
+def test_print_falls_back_to_char_by_char_on_unicode_encode_error():
+    # Some terminals cannot print certain unicode characters and raise a
+    # UnicodeEncodeError. In that case _print should retry printing the
+    # string one character at a time, replacing anything it still can't
+    # print with '?'.
+    good_char = 'a'
+    bad_char = '✓'
+    string = good_char + bad_char
+
+    def fake_print(s, end='\n'):
+        if bad_char in s:
+            raise UnicodeEncodeError('ascii', s, 0, 1, 'test')
+        sys.stdout.write('{}{}'.format(s, end))
+
+    saved_stdout = sys.stdout
+    try:
+        out = StringIO()
+        sys.stdout = out
+        with patch('builtins.print', side_effect=fake_print):
+            log._print(string)
+        output = out.getvalue()
+    finally:
+        sys.stdout = saved_stdout
+
+    assert output == 'a?', output

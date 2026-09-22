@@ -117,6 +117,27 @@ def test_set_metadata():
 
     assert new_metadata['title'] == new_title, new_metadata['title']
 
+def test_base_stub_methods_return_defaults():
+    # Base is an abstract-ish class; sub-classes are expected to override
+    # these, but the base implementations should return safe defaults.
+    base = Base('/does/not/matter.xyz')
+
+    assert base.get_album() is None
+    assert base.get_coordinate('latitude') is None
+    assert base.get_title() is None
+    assert base.set_album('some-album') is None
+    assert base.set_original_name() == False
+
+def test_get_extension_invalid_file_returns_none():
+    base = Base('/path/to/file.invalidextension')
+
+    assert base.get_extension() is None
+
+def test_get_mimetype_invalid_file_returns_none():
+    base = Base('/path/to/file.invalidextension')
+
+    assert base.get_mimetype() is None
+
 def test_set_metadata_basename():
     temporary_folder, folder = helper.create_working_folder()
 

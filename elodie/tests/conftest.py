@@ -48,9 +48,19 @@ def setup_test_environment():
     Set up the test environment before each test function.
     This creates a fresh temporary application directory and config file for each test.
     """
+    # elodie caches the config and the MapQuest key for the lifetime of the
+    #  process. Reset them so each test uses its own config and does not
+    #  depend on which tests ran before it.
+    from elodie.config import load_config
+    from elodie import geolocation
+    if hasattr(load_config, 'config'):
+        del load_config.config
+    geolocation.__KEY__ = None
+    geolocation.__PREFER_ENGLISH_NAMES__ = None
+
     # Get the test directory
     test_directory = os.path.dirname(os.path.abspath(__file__))
-    
+
     # Create a temporary directory to use for the application directory while running tests
     temporary_application_directory = tempfile.mkdtemp('-elodie-tests')
     os.environ['ELODIE_APPLICATION_DIRECTORY'] = temporary_application_directory

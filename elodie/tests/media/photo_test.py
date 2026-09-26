@@ -35,6 +35,9 @@ def test_photo_extensions():
     assert 'png' in extensions
     assert 'rw2' in extensions
     assert 'webp' in extensions
+    for extension in ('avif', 'cr3', 'erf', 'heif', 'hif', 'iiq', 'mrw', 'nrw',
+                      'orf', 'pef', 'raf', 'raw', 'srw', 'tif', 'tiff', 'x3f'):
+        assert extension in extensions, extension
 
     valid_extensions = Photo.get_valid_extensions()
 
@@ -367,6 +370,11 @@ PHOTO_TYPE_FILES = [
     ('photo.heic', (2019, 5, 26, 10, 33, 20, 6, 146, 0)),
     ('photo.png', (2015, 1, 18, 12, 1, 1, 6, 18, 0)),
     ('photo.webp', (2019, 7, 4, 12, 0, 0, 3, 185, 0)),
+    ('photo.tif', (2020, 6, 15, 10, 30, 0, 0, 167, 0)),
+    ('photo.tiff', (2020, 6, 15, 10, 30, 0, 0, 167, 0)),
+    ('photo.heif', (2020, 6, 15, 10, 30, 0, 0, 167, 0)),
+    ('photo.hif', (2020, 6, 15, 10, 30, 0, 0, 167, 0)),
+    ('photo.avif', (2020, 6, 15, 10, 30, 0, 0, 167, 0)),
 ] + [
     (asset['name'], None) for asset in helper.ASSETS['assets']
 ]

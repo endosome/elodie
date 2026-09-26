@@ -14,3 +14,5 @@ build/**
 **/*.rw2
 env/**
 .venv/**
+# Test assets downloaded from elodie-test-assets, see elodie/tests/assets.json
+elodie/tests/files/raw-*

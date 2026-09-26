@@ -18,7 +18,10 @@ from elodie.media.photo import Photo
 
 # These tests upload to Google Photos which fails for simultaneous uploads
 #  of the same file. Run them in one worker with pytest -n auto --dist loadgroup
-pytestmark = pytest.mark.xdist_group('googlephotos')
+pytestmark = [
+    pytest.mark.xdist_group('googlephotos'),
+    pytest.mark.skip(reason="Google Photos tests are disabled: they upload to a real account with shared credentials and fail when Google's quota for concurrent writes is exceeded (HTTP 429)"),
+]
 
 # Globals to simplify mocking configs
 auth_file = helper.get_file('plugins/googlephotos/auth_file.json')

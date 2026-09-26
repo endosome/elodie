@@ -1335,6 +1335,7 @@ def test_verify_error():
     assert origin in result.output, result.output
     assert 'Error                          1' in result.output, result.output
 
+@pytest.mark.xdist_group('googlephotos')
 @mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-cli-batch-plugin-googlephotos' % gettempdir())
 def test_cli_batch_plugin_googlephotos(mock_get_config_file):
     auth_file = helper.get_file('plugins/googlephotos/auth_file.json')

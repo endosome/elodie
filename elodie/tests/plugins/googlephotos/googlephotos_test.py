@@ -5,6 +5,8 @@ import os
 import sys
 from tempfile import gettempdir
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))))
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 
@@ -13,6 +15,10 @@ from elodie.config import load_config
 from elodie.plugins.googlephotos.googlephotos import GooglePhotos
 from elodie.media.audio import Audio
 from elodie.media.photo import Photo
+
+# These tests upload to Google Photos which fails for simultaneous uploads
+#  of the same file. Run them in one worker with pytest -n auto --dist loadgroup
+pytestmark = pytest.mark.xdist_group('googlephotos')
 
 # Globals to simplify mocking configs
 auth_file = helper.get_file('plugins/googlephotos/auth_file.json')

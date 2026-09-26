@@ -17,6 +17,13 @@ from elodie.dependencies import get_exiftool
 from elodie import constants
 
 
+def pytest_configure(config):
+    # Registered by pytest-xdist as well. Tests in the same group run in the
+    #  same worker with pytest -n auto --dist loadgroup.
+    config.addinivalue_line(
+        'markers', 'xdist_group(name): run the tests of a group in one worker'
+    )
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_exiftool():
     """Start ExifTool once for the entire test session."""

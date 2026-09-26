@@ -1,6 +1,4 @@
 """Look up geolocation information for media objects."""
-from __future__ import print_function
-from __future__ import division
 
 from os import path
 

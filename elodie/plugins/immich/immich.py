@@ -7,7 +7,6 @@ Enables albums and favorites to be managed through Immich's UI while ensuring:
 
 .. moduleauthor:: Jaisen Mathai <jaisen@jmathai.com>
 """
-from __future__ import print_function
 
 import json
 import os

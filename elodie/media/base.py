@@ -15,11 +15,6 @@ import os
 
 from elodie import constants
 
-try:        # Py3k compatibility
-    basestring
-except NameError:
-    basestring = (bytes, str)
-
 
 class Base(object):
 
@@ -272,7 +267,7 @@ class Base(object):
     def get_class_by_file(cls, _file, classes):
         """Static method to get a media object by file.
         """
-        if not isinstance(_file, basestring) or not os.path.isfile(_file):
+        if not isinstance(_file, (bytes, str)) or not os.path.isfile(_file):
             return None
 
         extension = os.path.splitext(_file)[1][1:].lower()

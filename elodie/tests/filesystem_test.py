@@ -1,4 +1,3 @@
-from __future__ import absolute_import
 # Project imports
 import calendar
 import unittest.mock as mock

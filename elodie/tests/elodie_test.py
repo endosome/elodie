@@ -9,7 +9,6 @@ import time
 from click.testing import CliRunner
 import pytest
 # assert_raises replaced with pytest.raises
-from six import text_type, unichr as six_unichr
 from tempfile import gettempdir
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))))
@@ -101,7 +100,7 @@ def test_import_file_path_utf8_encoded_ascii_checkmark():
     temporary_folder, folder = helper.create_working_folder()
     temporary_folder_destination, folder_destination = helper.create_working_folder()
 
-    origin = text_type(folder)+u'/unicode\u2713filename.txt'
+    origin = str(folder)+u'/unicode\u2713filename.txt'
     # encode the unicode string to ascii
     origin = origin.encode('utf-8')
 
@@ -120,7 +119,7 @@ def test_import_file_path_unicode_checkmark():
     temporary_folder, folder = helper.create_working_folder()
     temporary_folder_destination, folder_destination = helper.create_working_folder()
 
-    origin = text_type(folder)+u'/unicode\u2713filename.txt'
+    origin = str(folder)+u'/unicode\u2713filename.txt'
 
     shutil.copyfile(helper.get_file('valid.txt'), origin)
 
@@ -137,7 +136,7 @@ def test_import_file_path_utf8_encoded_ascii_latin_nbsp():
     temporary_folder, folder = helper.create_working_folder()
     temporary_folder_destination, folder_destination = helper.create_working_folder()
 
-    origin = text_type(folder)+u'/unicode'+six_unichr(160)+u'filename.txt'
+    origin = str(folder)+u'/unicode'+chr(160)+u'filename.txt'
     # encode the unicode string to ascii
     origin = origin.encode('utf-8')
 
@@ -156,7 +155,7 @@ def test_import_file_path_unicode_latin_nbsp():
     temporary_folder, folder = helper.create_working_folder()
     temporary_folder_destination, folder_destination = helper.create_working_folder()
 
-    origin = text_type(folder)+u'/unicode'+six_unichr(160)+u'filename.txt'
+    origin = str(folder)+u'/unicode'+chr(160)+u'filename.txt'
 
     shutil.copyfile(helper.get_file('valid.txt'), origin)
 

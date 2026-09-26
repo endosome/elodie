@@ -1,6 +1,3 @@
-from __future__ import absolute_import
-from __future__ import division
-from builtins import range
 import pytest
 # Project imports
 import unittest.mock as mock
@@ -11,10 +8,7 @@ import sys
 from unittest.mock import patch
 from tempfile import gettempdir
 
-try:
-    from StringIO import StringIO
-except ImportError:
-    from io import StringIO
+from io import StringIO
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))))
 

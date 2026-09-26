@@ -8,6 +8,8 @@ import tempfile
 import time
 import datetime
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))))
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 
@@ -130,6 +132,26 @@ def test_set_date_taken():
     shutil.rmtree(folder)
 
     assert date_taken == (2013, 9, 30, 7, 6, 5, 0, 273, 0), metadata['date_taken']
+
+@pytest.mark.skipif(helper.is_windows(), reason='time.mktime does not support dates before 1970 on Windows')
+def test_set_date_taken_before_1970(monkeypatch):
+    monkeypatch.setattr(time, 'gmtime', helper.windows_gmtime)
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = '%s/video.mov' % folder
+    shutil.copyfile(helper.get_file('video.mov'), origin)
+
+    video = Video(origin)
+    status = video.set_date_taken(datetime.datetime(1960, 1, 1, 12, 0, 0))
+
+    assert status == True, status
+
+    video_new = Video(origin)
+    date_taken = video_new.get_date_taken()
+
+    shutil.rmtree(folder)
+
+    assert date_taken == (1960, 1, 1, 12, 0, 0, 4, 1, 0), date_taken
 
 def test_set_location():
     temporary_folder, folder = helper.create_working_folder()

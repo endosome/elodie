@@ -125,6 +125,21 @@ def test_set_album():
 
     assert album_name == metadata_new['album'], metadata_new
 
+def test_get_date_taken_before_1970(monkeypatch):
+    monkeypatch.setattr(time, 'gmtime', helper.windows_gmtime)
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = '%s/text.txt' % folder
+    with open(origin, 'w') as f:
+        f.write('{"date_taken":-315576000.0}\nsample text')
+
+    text = Text(origin)
+    date_taken = text.get_date_taken()
+
+    shutil.rmtree(folder)
+
+    assert date_taken == (1960, 1, 1, 12, 0, 0, 4, 1, 0), date_taken
+
 def test_set_date_taken():
     temporary_folder, folder = helper.create_working_folder()
 

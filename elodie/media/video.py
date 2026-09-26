@@ -15,6 +15,7 @@ import os
 import re
 import time
 
+from elodie.compatability import _gmtime
 from .media import Media
 
 
@@ -100,4 +101,4 @@ class Video(Media):
         if(seconds_since_epoch == 0):
             return None
 
-        return time.gmtime(seconds_since_epoch)
+        return _gmtime(seconds_since_epoch)

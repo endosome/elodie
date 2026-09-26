@@ -12,6 +12,7 @@ import time
 
 # load modules
 from elodie import log
+from elodie.compatability import _gmtime
 from elodie.media.base import Base
 
 
@@ -58,7 +59,7 @@ class Text(Base):
         # We return the value if found in metadata
         if(isinstance(self.metadata_line, dict) and
                 'date_taken' in self.metadata_line):
-            return time.gmtime(self.metadata_line['date_taken'])
+            return _gmtime(self.metadata_line['date_taken'])
 
         # If there's no date_taken in the metadata we return
         #   from the filesystem
@@ -66,7 +67,7 @@ class Text(Base):
             os.path.getmtime(source),
             os.path.getctime(source)
         )
-        return time.gmtime(seconds_since_epoch)
+        return _gmtime(seconds_since_epoch)
 
     def get_metadata(self):
         self.parse_metadata_line()

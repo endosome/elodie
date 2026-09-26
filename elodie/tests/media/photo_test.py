@@ -247,6 +247,26 @@ def test_set_date_taken():
     #assert date_taken == (2013, 9, 30, 7, 6, 5, 0, 273, 0), metadata['date_taken']
     assert date_taken == helper.time_convert((2013, 9, 30, 7, 6, 5, 0, 273, 0)), metadata['date_taken']
 
+@pytest.mark.skipif(helper.is_windows(), reason='time.mktime does not support dates before 1970 on Windows')
+def test_set_date_taken_before_1970(monkeypatch):
+    monkeypatch.setattr(time, 'gmtime', helper.windows_gmtime)
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = '%s/photo.jpg' % folder
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    photo = Photo(origin)
+    status = photo.set_date_taken(datetime(1960, 1, 1, 12, 0, 0))
+
+    assert status == True, status
+
+    photo_new = Photo(origin)
+    date_taken = photo_new.get_date_taken()
+
+    shutil.rmtree(folder)
+
+    assert date_taken == (1960, 1, 1, 12, 0, 0, 4, 1, 0), date_taken
+
 def test_set_location():
     temporary_folder, folder = helper.create_working_folder()
 

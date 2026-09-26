@@ -1,0 +1,56 @@
+{
+  "_comment": "Test files published as releases of https://github.com/endosome/elodie-test-assets. See helper.get_asset().",
+  "version": "v1",
+  "url": "https://github.com/endosome/elodie-test-assets/releases/download/{version}/{name}",
+  "assets": [
+    {
+      "name": "raw-nikon-z-f.nef",
+      "sha256": "98d6ca8e6c98048ca7ffed68ccaeda7b2b9f03807f0d320d97d5678db21748c2",
+      "size": 13462016,
+      "camera": "NIKON Z f",
+      "date_time_original": "2023:10:18 17:19:29"
+    },
+    {
+      "name": "raw-leica-m10-r.dng",
+      "sha256": "ba35d25d521c7ddbc4feca69c8cdbe071ac65dcd6cf2c93374391bf6f3662b8d",
+      "size": 54857728,
+      "camera": "LEICA M10-R",
+      "date_time_original": "2025:05:09 16:59:52"
+    },
+    {
+      "name": "raw-sony-dslr-a100.arw",
+      "sha256": "4df7981ac4baec9648b4f106751ea4b09a6e27bc70a15f8ef09bec051fec362d",
+      "size": 10137572,
+      "camera": "SONY DSLR-A100",
+      "date_time_original": "2018:02:19 17:55:25"
+    },
+    {
+      "name": "raw-canon-eos-1d-mark-ii-n.cr2",
+      "sha256": "8bf6591f64b0657bc6133cbd0ee1418ef8e6dd3dd595827f8e9910c0f235843c",
+      "size": 10529524,
+      "camera": "Canon EOS-1D Mark II N",
+      "date_time_original": "2017:04:23 11:21:17"
+    },
+    {
+      "name": "raw-leica-m9.dng",
+      "sha256": "914f27df1ab095446c5db058703719f4a3749adedbfb9f353a3e85fa4f8f9b58",
+      "size": 36433920,
+      "camera": "Leica M9 Digital Camera",
+      "date_time_original": "2017:01:03 16:47:40"
+    },
+    {
+      "name": "raw-nikon-d3.nef",
+      "sha256": "880c60c5f611adf6b70de3d099f8433492de3a3d96866d570122f17f0a651fc8",
+      "size": 8891234,
+      "camera": "NIKON D3",
+      "date_time_original": "2019:10:30 09:38:36"
+    },
+    {
+      "name": "raw-panasonic-dmc-lx7.rw2",
+      "sha256": "d142a23aca836053ed53e9ce3cb3ed2d434541d734d71a94a6eefadcd08bd31b",
+      "size": 3249664,
+      "camera": "Panasonic DMC-LX7",
+      "date_time_original": "2023:11:18 09:49:12"
+    }
+  ]
+}

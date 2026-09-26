@@ -75,12 +75,33 @@ def import_file(_file, destination, album_from_folder, trash, allow_duplicates, 
     if dest_path:
         log.all('%s -> %s' % (_file, dest_path))
     if trash:
-        if constants.dry_run:
+        # Only trash the source if it is safely in the destination: it was
+        #  imported now or it had been imported before (a duplicate).
+        if not dest_path and not is_imported(_file):
+            log.warn('Not moving %s to trash, it was not imported' % _file)
+        elif constants.dry_run:
             print(f"[DRY-RUN] Would move to trash: {_file}")
         else:
             send2trash(_file)
 
     return dest_path or None
+
+
+def is_imported(_file):
+    """Check if an identical copy of _file exists at another path, i.e.
+    it was imported before.
+    """
+    db = Db()
+    checksum = db.checksum(_file)
+    if checksum is None:
+        return False
+
+    checksum_file = db.get_hash(checksum)
+    return (
+        checksum_file is not None and
+        os.path.isfile(checksum_file) and
+        os.path.abspath(checksum_file) != os.path.abspath(_file)
+    )
 
 @click.command('batch')
 @click.option('--debug', default=False, is_flag=True,

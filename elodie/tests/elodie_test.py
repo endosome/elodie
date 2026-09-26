@@ -266,6 +266,68 @@ def test_import_file_send_to_trash_after_complete_import(mock_send2trash):
     assert destination_original_name == 'plain.jpg', destination_original_name
     assert destination_files == [os.path.basename(dest_path)], destination_files
 
+@mock.patch.object(elodie, 'send2trash')
+def test_import_file_send_to_trash_not_when_import_fails(mock_send2trash):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = '%s/plain.jpg' % folder
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    helper.reset_dbs()
+    with mock.patch.object(elodie.FILESYSTEM, 'process_file', return_value=None):
+        dest_path = elodie.import_file(origin, folder_destination, False, True, False)
+    helper.restore_dbs()
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert dest_path is None, dest_path
+    mock_send2trash.assert_not_called()
+
+@mock.patch.object(elodie, 'send2trash')
+def test_import_file_send_to_trash_duplicate(mock_send2trash):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = '%s/plain.jpg' % folder
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    helper.reset_dbs()
+    dest_path1 = elodie.import_file(origin, folder_destination, False, False, False)
+    dest_path2 = elodie.import_file(origin, folder_destination, False, True, False)
+    helper.restore_dbs()
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert dest_path1 is not None
+    assert dest_path2 is None, dest_path2
+    mock_send2trash.assert_called_once_with(origin)
+
+@mock.patch.object(elodie, 'send2trash')
+def test_import_file_send_to_trash_not_when_source_is_destination(mock_send2trash):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = '%s/plain.jpg' % folder
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    helper.reset_dbs()
+    dest_path1 = elodie.import_file(origin, folder_destination, False, False, False)
+    # Importing a file which is already in the library into the same library
+    dest_path2 = elodie.import_file(dest_path1, folder_destination, False, True, False)
+    helper.restore_dbs()
+
+    dest_path1_exists = os.path.isfile(dest_path1)
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert dest_path2 is None, dest_path2
+    assert dest_path1_exists, dest_path1
+    mock_send2trash.assert_not_called()
+
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()
     folder_destination = '{}/destination'.format(folder)

@@ -443,3 +443,27 @@ def test_set_album_keeps_content_of_large_file():
     assert status == True, status
     assert album == 'Test Album', album
     assert body_updated == body, len(body_updated)
+
+# gh-400: values in the JSON metadata line can be numbers or null
+@pytest.mark.parametrize('metadata_line,getter,expected', [
+    ('{"album": 2020}', 'get_album', '2020'),
+    ('{"title": 2020}', 'get_title', '2020'),
+    ('{"original_name": 12345}', 'get_original_name', '12345'),
+    ('{"album": 20.5}', 'get_album', '20.5'),
+    ('{"album": null}', 'get_album', None),
+    ('{"title": null}', 'get_title', None),
+    ('{"original_name": null}', 'get_original_name', None),
+])
+def test_get_metadata_from_non_string_values(metadata_line, getter, expected):
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = '%s/text.txt' % folder
+    with open(origin, 'w') as f:
+        f.write(metadata_line + '\nsample text')
+
+    value = getattr(Text(origin), getter)()
+
+    shutil.rmtree(folder)
+
+    assert value == expected, value
+

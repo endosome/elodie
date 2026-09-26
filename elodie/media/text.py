@@ -46,7 +46,7 @@ class Text(Base):
                 'album' not in self.metadata_line):
             return None
 
-        return self.metadata_line['album']
+        return self.get_string_from_metadata_line('album')
 
     def get_coordinate(self, type='latitude'):
         self.parse_metadata_line()
@@ -81,13 +81,25 @@ class Text(Base):
         self.parse_metadata_line()
         return super(Text, self).get_metadata()
 
+    def get_string_from_metadata_line(self, key):
+        """Get a value from the metadata line as a string. The JSON can
+        contain numbers (i.e. {"album": 2020}). gh-400
+
+        :param str key: Key of the value in the metadata line.
+        :returns: str or None if the value is null.
+        """
+        value = self.metadata_line[key]
+        if value is None:
+            return None
+        return str(value)
+
     def get_original_name(self):
         self.parse_metadata_line()
 
         # We return the value if found in metadata
         if(isinstance(self.metadata_line, dict) and
                 'original_name' in self.metadata_line):
-            return self.metadata_line['original_name']
+            return self.get_string_from_metadata_line('original_name')
 
         return super(Text, self).get_original_name()
 
@@ -98,7 +110,7 @@ class Text(Base):
                 'title' not in self.metadata_line):
             return None
 
-        return self.metadata_line['title']
+        return self.get_string_from_metadata_line('title')
 
     def reset_cache(self):
         """Resets any internal cache

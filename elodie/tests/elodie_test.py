@@ -716,6 +716,30 @@ full_path=%year/%month, %location
     assert len(files) == 1, files
     assert files[0].startswith(os.path.join('2019', '07, ')), files
 
+@pytest.mark.parametrize('metadata_line,expected_in_path', [
+    ('{"album": 2020}', os.path.join('', '2020', '')),
+    ('{"title": 2020}', '-note-2020.txt'),
+    ('{"original_name": 12345}', '-12345.txt'),
+])
+def test_import_file_text_with_number_in_metadata(metadata_line, expected_in_path):
+    # gh-400
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = '%s/note.txt' % folder
+    with open(origin, 'w') as f:
+        f.write(metadata_line + '\nsample text')
+
+    helper.reset_dbs()
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+    helper.restore_dbs()
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert dest_path is not None
+    assert expected_in_path in dest_path, dest_path
+
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()
     folder_destination = '{}/destination'.format(folder)

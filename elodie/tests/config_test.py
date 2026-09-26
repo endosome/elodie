@@ -3,7 +3,6 @@
 import os
 import sys
 import unittest
-import pytest 
 
 
 from unittest.mock import patch
@@ -96,7 +95,6 @@ plugins=Dummy
 
     assert plugins == ['Dummy'], plugins
 
-@pytest.mark.skip("Skipping this to investigate when/where non-existant plugins were to be skipped.")
 @patch('elodie.config.get_config_file', return_value='%s/config.ini-load-plugin-config-one-with-invalid' % gettempdir())
 def test_load_plugin_config_one_with_invalid(mock_get_config_file):
     with open(mock_get_config_file.return_value, 'w') as f:
@@ -112,7 +110,10 @@ plugins=DNE
     if hasattr(load_config, 'config'):
         del load_config.config
 
-    assert plugins == [], plugins
+    # The config returns the names as written. Plugins which do not exist are
+    #  skipped when they are loaded, see test_load_plugins_*_with_invalid in
+    #  plugins_test.py.
+    assert plugins == ['DNE'], plugins
 
 @patch('elodie.config.get_config_file', return_value='%s/config.ini-load-plugin-config-many' % gettempdir())
 def test_load_plugin_config_many(mock_get_config_file):

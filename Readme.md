@@ -15,26 +15,24 @@ Elodie requires Python 3.10 or higher. Check your version by typing `python3 --v
 
 ### Install ExifTool
 
-Elodie relies on the great [ExifTool library by Phil Harvey](http://www.sno.phy.queensu.ca/~phil/exiftool/). You'll need to install it for your platform.
+Elodie relies on the great [ExifTool library by Phil Harvey](https://exiftool.org/). You'll need to install version 13.49 or higher, older versions write HEIC Motion Photos which Google Photos can't display. Elodie tells you when your version is too old.
 
-* Some video features require version 10.20 or higher
-* Support for HEIC files requires version 11.50 or higher
-* Translating geolocation to city name requires version 13.13 or higher
-
-Check your version by typing `exiftool -ver` and see the [manual installation instructions for ExifTool](http://www.sno.phy.queensu.ca/~phil/exiftool/install.html#Unix) if needed.
+Check your version by typing `exiftool -ver`. The packages of many Linux distributions are older, in that case follow the [installation instructions for ExifTool](https://exiftool.org/install.html#Unix).
 
 ```
 # OSX (uses homebrew, http://brew.sh/)
 brew install exiftool
 
-# Debian / Ubuntu
-apt-get install libimage-exiftool-perl
-
-# Fedora / Redhat
-dnf install perl-Image-ExifTool
+# Linux, when your distribution's package is too old
+wget -O Image-ExifTool.tar.gz https://github.com/exiftool/exiftool/archive/refs/tags/13.59.tar.gz
+tar -xzf Image-ExifTool.tar.gz
+cd exiftool-13.59
+perl Makefile.PL
+make
+sudo make install
 
 # Windows users can install the binary
-# http://www.sno.phy.queensu.ca/~phil/exiftool/install.html
+# https://exiftool.org/install.html
 ```
 
 ### Clone the Elodie repository

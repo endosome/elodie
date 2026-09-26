@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirna
 from . import helper
 from elodie.config import load_config
 from elodie.filesystem import FileSystem
+from elodie.media.audio import Audio
 from elodie.media.text import Text
 from elodie.media.media import Media
 from elodie.media.photo import Photo
@@ -1583,3 +1584,197 @@ def test_process_file_dry_run_real():
     shutil.rmtree(folder)
     if destination:
         shutil.rmtree(os.path.dirname(os.path.dirname(destination)))
+
+# gh-533: importing must not modify the source file in any way.
+SOURCE_FILES = [
+    ('plain.jpg', Photo),
+    ('video.mov', Video),
+    ('audio.m4a', Audio),
+    ('valid-without-header.txt', Text),
+]
+
+def _file_state(file_path):
+    file_stat = os.stat(file_path)
+    return {
+        'ctime': file_stat.st_ctime_ns,
+        'mtime': file_stat.st_mtime_ns,
+        'inode': file_stat.st_ino,
+        'checksum': helper.checksum(file_path),
+    }
+
+def _original_files(*folders):
+    return [
+        os.path.join(dirname, filename)
+        for folder in folders
+        for dirname, dirnames, filenames in os.walk(folder)
+        for filename in filenames
+        if filename.endswith('_original')
+    ]
+
+def _create_source(folder, file_name):
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+    os.utime(origin, (1000000000, 1000000000))
+    return origin
+
+@pytest.mark.parametrize('file_name,media_class', SOURCE_FILES)
+def test_process_file_does_not_modify_source(file_name, media_class):
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = _create_source(folder, file_name)
+    state_before = _file_state(origin)
+
+    destination = filesystem.process_file(origin, folder_destination, media_class(origin), allowDuplicate=True)
+    state_after = _file_state(origin)
+    original_files = _original_files(folder, folder_destination)
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert destination is not None
+    assert state_after == state_before, (state_before, state_after)
+    assert original_files == [], original_files
+
+@pytest.mark.parametrize('file_name,media_class', SOURCE_FILES)
+def test_process_file_sets_original_name_on_destination(file_name, media_class):
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = _create_source(folder, file_name)
+
+    destination = filesystem.process_file(origin, folder_destination, media_class(origin), allowDuplicate=True)
+    source_original_name = media_class(origin).get_original_name()
+    destination_original_name = media_class(destination).get_original_name()
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert source_original_name is None, source_original_name
+    assert destination_original_name == file_name, destination_original_name
+
+@pytest.mark.parametrize('file_name,media_class,original_name', [
+    ('with-original-name.jpg', Photo, 'originalfilename.jpg'),
+    ('with-original-name.txt', Text, 'originalname.txt'),
+])
+def test_process_file_keeps_existing_original_name(file_name, media_class, original_name):
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = _create_source(folder, file_name)
+
+    destination = filesystem.process_file(origin, folder_destination, media_class(origin), allowDuplicate=True)
+    destination_original_name = media_class(destination).get_original_name()
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert destination_original_name == original_name, destination_original_name
+
+@pytest.mark.skipif(helper.is_windows() or os.geteuid() == 0, reason='Requires POSIX permissions enforced for a non-root user')
+def test_process_file_with_read_only_source():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = _create_source(folder, 'plain.jpg')
+    os.chmod(origin, 0o444)
+    os.chmod(folder, 0o555)
+    state_before = _file_state(origin)
+
+    try:
+        destination = filesystem.process_file(origin, folder_destination, Photo(origin), allowDuplicate=True)
+        state_after = _file_state(origin)
+        destination_original_name = Photo(destination).get_original_name()
+    finally:
+        os.chmod(folder, 0o755)
+        shutil.rmtree(folder)
+        shutil.rmtree(folder_destination)
+
+    assert state_after == state_before, (state_before, state_after)
+    assert destination_original_name == 'plain.jpg', destination_original_name
+
+def test_process_file_sets_destination_mtime_from_date_taken():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = _create_source(folder, 'plain.jpg')
+    media = Photo(origin)
+    date_taken = media.get_metadata()['date_taken']
+
+    destination = filesystem.process_file(origin, folder_destination, media, allowDuplicate=True)
+    destination_mtime = os.stat(destination).st_mtime
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert destination_mtime == calendar.timegm(date_taken), destination_mtime
+
+@pytest.mark.parametrize('file_name,media_class', [
+    ('plain.jpg', Photo),
+    ('valid-without-header.txt', Text),
+])
+def test_process_file_move_sets_original_name(file_name, media_class):
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = _create_source(folder, file_name)
+
+    destination = filesystem.process_file(origin, folder_destination, media_class(origin), move=True, allowDuplicate=True)
+    origin_exists = os.path.exists(origin)
+    destination_original_name = media_class(destination).get_original_name()
+    original_files = _original_files(folder, folder_destination)
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert not origin_exists, origin
+    assert destination_original_name == file_name, destination_original_name
+    assert original_files == [], original_files
+
+@mock.patch('elodie.constants.dry_run', True)
+def test_process_file_dry_run_does_not_modify_source():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = _create_source(folder, 'plain.jpg')
+    state_before = _file_state(origin)
+
+    destination = filesystem.process_file(origin, folder_destination, Photo(origin), allowDuplicate=True)
+    state_after = _file_state(origin)
+    destination_exists = os.path.exists(destination)
+    original_files = _original_files(folder, folder_destination)
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert state_after == state_before, (state_before, state_after)
+    assert not destination_exists, destination
+    assert original_files == [], original_files
+
+def test_process_file_skips_already_imported_source():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = _create_source(folder, 'plain.jpg')
+
+    first = filesystem.process_file(origin, folder_destination, Photo(origin))
+    # The copy now contains the original name so its checksum differs from
+    #  the source but the source should still be recognized as imported.
+    checksums_differ = helper.checksum(origin) != helper.checksum(first)
+    second = filesystem.process_file(origin, folder_destination, Photo(origin))
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert first is not None
+    assert checksums_differ
+    assert second is None, second
+

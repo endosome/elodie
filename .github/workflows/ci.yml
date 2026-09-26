@@ -16,8 +16,10 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     env:
-      # Geolocation requires a recent ExifTool which Ubuntu does not ship yet
-      EXIFTOOL_VERSION: "13.50"
+      # Elodie requires 13.49 or higher (see MINIMUM_EXIFTOOL_VERSION), which
+      #  Ubuntu does not ship yet. The archive of the official repository's tag.
+      EXIFTOOL_VERSION: "13.59"
+      EXIFTOOL_SHA256: "87d3317882fdae9cb4dcfe57a96a378d0132ffc02c731315bf128b19ddcf7aac"
     steps:
       - uses: actions/checkout@v7
 
@@ -32,9 +34,10 @@ jobs:
 
       - name: Install ExifTool
         run: |
-          wget -O Image-ExifTool-${EXIFTOOL_VERSION}.tar.gz https://files.jmathai.com/elodie/Image-ExifTool-${EXIFTOOL_VERSION}.tar.gz
-          tar -xzf Image-ExifTool-${EXIFTOOL_VERSION}.tar.gz
-          cd Image-ExifTool-${EXIFTOOL_VERSION}
+          wget -O Image-ExifTool.tar.gz https://github.com/exiftool/exiftool/archive/refs/tags/${EXIFTOOL_VERSION}.tar.gz
+          echo "${EXIFTOOL_SHA256}  Image-ExifTool.tar.gz" | sha256sum --check
+          tar -xzf Image-ExifTool.tar.gz
+          cd exiftool-${EXIFTOOL_VERSION}
           perl Makefile.PL
           make
           sudo make install

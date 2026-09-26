@@ -10,13 +10,27 @@ ENV LC_ALL=C.UTF-8
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
-        libimage-exiftool-perl \
+        perl \
         wget \
         make \
         locales && \
     locale-gen C.UTF-8 && \
     pip install --upgrade pip setuptools wheel && \
     rm -rf /var/lib/apt/lists/*
+
+# Install ExifTool, Elodie requires 13.49 or higher which Debian does not ship
+ARG EXIFTOOL_VERSION=13.59
+ARG EXIFTOOL_SHA256=87d3317882fdae9cb4dcfe57a96a378d0132ffc02c731315bf128b19ddcf7aac
+RUN wget -O /tmp/Image-ExifTool.tar.gz https://github.com/exiftool/exiftool/archive/refs/tags/${EXIFTOOL_VERSION}.tar.gz && \
+    echo "${EXIFTOOL_SHA256}  /tmp/Image-ExifTool.tar.gz" | sha256sum --check && \
+    tar -xzf /tmp/Image-ExifTool.tar.gz -C /tmp && \
+    cd /tmp/exiftool-${EXIFTOOL_VERSION} && \
+    perl Makefile.PL && \
+    make && \
+    make install && \
+    cd / && \
+    rm -rf /tmp/Image-ExifTool.tar.gz /tmp/exiftool-${EXIFTOOL_VERSION} && \
+    exiftool -ver
 
 # Set working directory
 WORKDIR /opt/elodie

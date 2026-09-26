@@ -131,8 +131,9 @@ def test_exiftool_place_name_unavailable(mock_available):
     result = geolocation.exiftool_place_name(37.3688, -122.0365)
     assert result is None, "Should return None when ExifTool is unavailable"
 
-@mock.patch('elodie.geolocation.__KEY__', None)
-def test_coordinates_by_name_fallback_to_exiftool():
+# get_key() loads the key again if __KEY__ is None so we patch it instead
+@mock.patch('elodie.geolocation.get_key', return_value=None)
+def test_coordinates_by_name_fallback_to_exiftool(mock_get_key):
     """Test that coordinates_by_name falls back to ExifTool when MapQuest key is not available."""
     result = geolocation.coordinates_by_name("Sunnyvale, California")
     
@@ -220,8 +221,9 @@ def test_place_name_no_default():
 
     assert place_name['default'] == 'Unknown Location', place_name
 
-@mock.patch('elodie.geolocation.__KEY__', None)
-def test_place_name_fallback_to_exiftool():
+# get_key() loads the key again if __KEY__ is None so we patch it instead
+@mock.patch('elodie.geolocation.get_key', return_value=None)
+def test_place_name_fallback_to_exiftool(mock_get_key):
     """Test that place_name falls back to ExifTool when MapQuest key is not available."""
     # Test with known coordinates for Sunnyvale
     lat, lon = 37.3688, -122.0365

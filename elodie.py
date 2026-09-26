@@ -37,7 +37,8 @@ from elodie import constants
 FILESYSTEM = FileSystem()
 
 def import_file(_file, destination, album_from_folder, trash, allow_duplicates, location=None, time=None):
-    
+    FILESYSTEM.skipped_as_duplicate = False
+
     _file = _decode(_file)
     destination = _decode(destination)
 
@@ -182,7 +183,7 @@ def _import(destination, source, file, album_from_folder, trash, allow_duplicate
                     trash, allow_duplicates, location, time)
         if dest_path:
             result.append((current_file, True))
-        elif not allow_duplicates:
+        elif FILESYSTEM.skipped_as_duplicate:
             result.append((current_file, None))  # duplicate
         else:
             result.append((current_file, False))  # error

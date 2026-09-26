@@ -141,7 +141,7 @@ def test_set_original_name_with_arg():
     assert result is True, result
 
 def test_set_original_name():
-    files = ['plain.jpg', 'audio.m4a', 'photo.nef', 'video.mov']
+    files = ['plain.jpg', 'audio.m4a', 'raw-nikon-d3.nef', 'video.mov']
 
     for file in files:
         ext = os.path.splitext(file)[1]
@@ -150,9 +150,10 @@ def test_set_original_name():
 
         random_file_name = '%s%s' % (helper.random_string(10), ext)
         origin = '%s/%s' % (folder, random_file_name)
-        file_path = helper.get_file(file)
-        if file_path is False:
-            file_path = helper.download_file(file, folder)
+        file_path = helper.get_file(file) or helper.get_asset(file)
+        if file_path is None:
+            shutil.rmtree(folder)
+            pytest.skip('{} could not be downloaded'.format(file))
 
         shutil.copyfile(file_path, origin)
 

@@ -2,6 +2,7 @@ from __future__ import division
 from __future__ import unicode_literals
 from builtins import range
 import hashlib
+import json
 import os
 import random
 import string
@@ -10,7 +11,7 @@ import tempfile
 import zlib
 import re
 import time
-import urllib
+import urllib.request
 
 from datetime import datetime
 from datetime import timedelta
@@ -40,22 +41,55 @@ def create_working_folder(format=None):
 
     return (temporary_folder, folder)
 
-def download_file(name, destination):
+# Large test files (i.e. camera raw files) are published as releases of
+#  https://github.com/endosome/elodie-test-assets and listed in assets.json.
+ASSETS = json.load(open(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'assets.json')))
+_verified_assets = set()
+
+def get_asset(name):
+    """Get the path of a test asset in files/ (ignored by git). Download it
+    from the release pinned in assets.json if it is missing or its sha256
+    does not match.
+
+    :returns: str path of the file or None if it could not be downloaded.
+    """
+    asset = next(a for a in ASSETS['assets'] if a['name'] == name)
+    file_path = get_file_path(name)
+    if name in _verified_assets:
+        return file_path
+    if os.path.isfile(file_path) and checksum(file_path) == asset['sha256']:
+        _verified_assets.add(name)
+        return file_path
+
+    url = ASSETS['url'].format(version=ASSETS['version'], name=name)
+    # Download to a temporary name first since tests may run in parallel
+    temporary_path = '{}.{}.download'.format(file_path, random_string(10))
     try:
-        url_to_file = 'https://s3.amazonaws.com/jmathai/github/elodie/{}'.format(name)
-        # urlretrieve works differently for python 2 and 3
-        if constants.python_version < 3:
-            final_name = '{}/{}{}'.format(destination, random_string(10), os.path.splitext(name)[1])
-            urllib.urlretrieve(
-                url_to_file,
-                final_name
-            )
-        else:
-            final_name, headers = urllib.request.urlretrieve(url_to_file)
-        return final_name
-    except Exception as e:
-        return False
-    
+        with urllib.request.urlopen(url, timeout=120) as response, open(temporary_path, 'wb') as f:
+            while True:
+                chunk = response.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+        if checksum(temporary_path) != asset['sha256']:
+            return None
+        os.replace(temporary_path, file_path)
+        _verified_assets.add(name)
+        return file_path
+    except Exception:
+        return None
+    finally:
+        if os.path.exists(temporary_path):
+            os.remove(temporary_path)
+
+def get_asset_date_taken(name):
+    """The date the asset was taken as a time.struct_time like get_date_taken()
+    returns it with TZ=GMT.
+    """
+    asset = next(a for a in ASSETS['assets'] if a['name'] == name)
+    date = time.strptime(asset['date_time_original'], '%Y:%m:%d %H:%M:%S')
+    return time_convert(tuple(date)[:8] + (0,))
+
 def get_file(name):
     file_path = get_file_path(name)
     if not os.path.isfile(file_path):

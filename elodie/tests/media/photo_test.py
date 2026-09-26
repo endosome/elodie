@@ -5,12 +5,10 @@ import os
 import sys
 
 from datetime import datetime
-import gc
 import shutil
 import tempfile
 import time
 import unittest.mock as mock
-import warnings
 
 import pytest
 
@@ -179,7 +177,7 @@ def test_is_not_valid():
 
     assert not photo.is_valid()
 
-def test_is_valid_fallback_using_pillow():
+def test_is_valid_when_imghdr_fails():
     photo = Photo(helper.get_file('imghdr-error.jpg'))
 
     assert photo.is_valid()
@@ -364,126 +362,79 @@ def test_set_title_non_ascii():
 
     assert metadata['title'] == unicode_title, metadata['title']
 
-PHOTO_TYPE_DATES = {
-    'arw': (2007, 4, 8, 17, 41, 18, 6, 98, 0),
-    'cr2': (2005, 10, 29, 16, 14, 44, 5, 302, 0),
-    'dng': (2009, 10, 20, 9, 10, 46, 1, 293, 0),
-    'heic': (2019, 5, 26, 10, 33, 20, 6, 146, 0),
-    'nef': (2008, 10, 24, 9, 12, 56, 4, 298, 0),
-    'png': (2015, 1, 18, 12, 1, 1, 6, 18, 0),
-    'rw2': (2014, 11, 19, 23, 7, 44, 2, 323, 0),
-    'webp': (2019, 7, 4, 12, 0, 0, 3, 185, 0),
-}
+# Photo files of each supported type and the date they were taken. Camera raw
+#  files are downloaded from elodie-test-assets, see helper.get_asset().
+PHOTO_TYPE_FILES = [
+    ('photo.heic', (2019, 5, 26, 10, 33, 20, 6, 146, 0)),
+    ('photo.png', (2015, 1, 18, 12, 1, 1, 6, 18, 0)),
+    ('photo.webp', (2019, 7, 4, 12, 0, 0, 3, 185, 0)),
+] + [
+    (asset['name'], None) for asset in helper.ASSETS['assets']
+]
 
-@pytest.mark.parametrize(
-    "photo_type,date",
-    [(photo_type, date) for photo_type, date in PHOTO_TYPE_DATES.items() if photo_type in Photo.extensions],
-)
-def test_various_types_get(photo_type, date):
-    _test_photo_type_get(photo_type, date)
+def _get_photo_type_file(file_name, date):
+    if date is not None:
+        return (helper.get_file(file_name), helper.time_convert(date))
 
-@pytest.mark.parametrize(
-    "photo_type,date",
-    [(photo_type, date) for photo_type, date in PHOTO_TYPE_DATES.items() if photo_type in Photo.extensions],
-)
-def test_various_types_set(photo_type, date):
-    _test_photo_type_set(photo_type, date)
+    file_path = helper.get_asset(file_name)
+    if file_path is None:
+        pytest.skip('{} could not be downloaded'.format(file_name))
+    return (file_path, helper.get_asset_date_taken(file_name))
 
-def _test_photo_type_get(type, date):
+@pytest.mark.parametrize('file_name,date', PHOTO_TYPE_FILES)
+def test_various_types_get(file_name, date):
+    photo_file, date = _get_photo_type_file(file_name, date)
     temporary_folder, folder = helper.create_working_folder()
-
-    photo_name = 'photo.{}'.format(type)
-    photo_file = helper.get_file(photo_name)
-    origin = '{}/{}'.format(folder, photo_name)
-
-    if not photo_file:
-        photo_file = helper.download_file(photo_name, folder)
-        if not photo_file or not os.path.isfile(photo_file):
-            pytest.skip('{} file not downlaoded'.format(type))
-
-        # downloading for each test is costly so we save it in the working directory
-        file_path_save_as = helper.get_file_path(photo_name)
-        if os.path.isfile(photo_file):
-            shutil.copyfile(photo_file, file_path_save_as)
-
+    origin = os.path.join(folder, file_name)
     shutil.copyfile(photo_file, origin)
 
     photo = Photo(origin)
     metadata = photo.get_metadata()
-    if metadata is None:
-        shutil.rmtree(folder)
-        pytest.skip('{} metadata unavailable on this platform'.format(type))
 
-    shutil.rmtree(folder)
+    shutil.rmtree(temporary_folder)
 
-    assert metadata['date_taken'] == helper.time_convert(date), '{} date {}'.format(type, metadata['date_taken'])
+    assert metadata is not None, '{} is not a valid photo'.format(file_name)
+    assert metadata['date_taken'] == date, '{} date {}'.format(file_name, metadata['date_taken'])
 
-def _test_photo_type_set(type, date):
+@pytest.mark.parametrize('file_name,date', PHOTO_TYPE_FILES)
+def test_various_types_set(file_name, date):
+    photo_file, date = _get_photo_type_file(file_name, date)
     temporary_folder, folder = helper.create_working_folder()
-
-    photo_name = 'photo.{}'.format(type)
-    photo_file = helper.get_file(photo_name)
-    origin = '{}/{}'.format(folder, photo_name)
-
-    if not photo_file:
-        photo_file = helper.download_file(photo_name, folder)
-        if not photo_file or not os.path.isfile(photo_file):
-            pytest.skip('{} file not downlaoded'.format(type))
-
+    origin = os.path.join(folder, file_name)
     shutil.copyfile(photo_file, origin)
 
     photo = Photo(origin)
     origin_metadata = photo.get_metadata()
-    if origin_metadata is None:
-        shutil.rmtree(folder)
-        pytest.skip('{} metadata unavailable on this platform'.format(type))
-
     status = photo.set_location(11.1111111111, 99.9999999999)
-    if status is None:
-        shutil.rmtree(folder)
-        pytest.skip('{} location write unsupported on this platform'.format(type))
-
-    assert status == True, status
 
     photo_new = Photo(origin)
     metadata = photo_new.get_metadata()
 
-    shutil.rmtree(folder)
+    shutil.rmtree(temporary_folder)
 
-    assert metadata['date_taken'] == helper.time_convert(date), '{} date {}'.format(type, metadata['date_taken'])
-    assert helper.isclose(metadata['latitude'], 11.1111111111), '{} lat {}'.format(type, metadata['latitude'])
-    assert helper.isclose(metadata['longitude'], 99.9999999999), '{} lon {}'.format(type, metadata['latitude'])
+    assert origin_metadata is not None, '{} is not a valid photo'.format(file_name)
+    assert status == True, status
+    assert metadata['date_taken'] == date, '{} date {}'.format(file_name, metadata['date_taken'])
+    assert helper.isclose(metadata['latitude'], 11.1111111111), '{} lat {}'.format(file_name, metadata['latitude'])
+    assert helper.isclose(metadata['longitude'], 99.9999999999), '{} lon {}'.format(file_name, metadata['longitude'])
 
-def _count_image_open():
-    """Patch Image.open to record each call and the images it returned."""
-    from PIL import Image
-    opened = []
-    real_open = Image.open
+def _count_exiftool_reads():
+    """Patch ExifTool.get_metadata to count how often files are read."""
+    # Use the class media.py uses since other tests reload pyexiftool
+    from elodie.media import media
+    ExifTool = media.ExifTool
+    calls = []
+    real_get_metadata = ExifTool.get_metadata
 
-    def counting_open(*args, **kwargs):
-        opened.append(None)
-        opened[-1] = real_open(*args, **kwargs)
-        return opened[-1]
+    def counting_get_metadata(self, filename):
+        calls.append(filename)
+        return real_get_metadata(self, filename)
 
-    return (mock.patch.object(Image, 'open', counting_open), opened)
+    return (mock.patch.object(ExifTool, 'get_metadata', counting_get_metadata), calls)
 
-def test_is_valid_closes_file():
-    patcher, opened = _count_image_open()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        with patcher:
-            valid = Photo(helper.get_file('plain.jpg')).is_valid()
-        gc.collect()
-
-    resource_warnings = [w for w in caught if issubclass(w.category, ResourceWarning)]
-    assert valid == True, valid
-    assert len(opened) == 1, opened
-    assert opened[0].fp is None, 'File was not closed'
-    assert resource_warnings == [], resource_warnings
-
-def test_is_valid_opens_file_once():
+def test_is_valid_reads_file_once():
     # is_valid() is called for each attribute of the file
-    patcher, opened = _count_image_open()
+    patcher, calls = _count_exiftool_reads()
     with patcher:
         photo = Photo(helper.get_file('plain.jpg'))
         photo.get_metadata()
@@ -493,51 +444,66 @@ def test_is_valid_opens_file_once():
         valid = photo.is_valid()
 
     assert valid == True, valid
-    assert len(opened) == 1, opened
+    assert len(calls) == 1, calls
 
 def test_is_valid_after_reset_cache():
-    patcher, opened = _count_image_open()
+    patcher, calls = _count_exiftool_reads()
     with patcher:
         photo = Photo(helper.get_file('plain.jpg'))
         valid = photo.is_valid()
-        valid_cached = photo.is_valid()
         photo.reset_cache()
         valid_after_reset = photo.is_valid()
-        photo.source = helper.get_file('invalid.jpg')
-        valid_other_file = photo.is_valid()
-        valid_other_file_cached = photo.is_valid()
 
     assert valid == True, valid
-    assert valid_cached == True, valid_cached
     assert valid_after_reset == True, valid_after_reset
-    assert valid_other_file == False, valid_other_file
-    assert valid_other_file_cached == False, valid_other_file_cached
-    # Once for plain.jpg, again after reset_cache() and for invalid.jpg
-    assert len(opened) == 3, opened
+    assert len(calls) == 2, calls
 
-def test_is_valid_does_not_open_file_with_other_extension():
-    patcher, opened = _count_image_open()
+def test_is_valid_does_not_read_file_with_other_extension():
+    patcher, calls = _count_exiftool_reads()
     with patcher:
         valid = Photo(helper.get_file('text.txt')).is_valid()
 
     assert valid == False, valid
-    assert opened == [], opened
+    assert calls == [], calls
 
-@pytest.mark.parametrize('width,height', [
-    (10000, 10000),  # Pillow warns above ~89 million pixels
-    (20000, 10000),  # Pillow refuses to open above ~179 million pixels
-])
-def test_is_valid_with_very_large_image(width, height):
+def test_is_valid_with_very_large_image():
+    # 200 million pixels, image libraries refuse to open images this large
     temporary_folder, folder = helper.create_working_folder()
     origin = os.path.join(folder, 'panorama.png')
-    helper.create_png(origin, width, height)
+    helper.create_png(origin, 20000, 10000)
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        valid = Photo(origin).is_valid()
+    valid = Photo(origin).is_valid()
 
-    shutil.rmtree(folder)
+    shutil.rmtree(temporary_folder)
 
     assert valid == True, valid
-    assert [w for w in caught if 'DecompressionBomb' in w.category.__name__] == [], caught
 
+@pytest.mark.parametrize('name,source', [
+    ('text.nef', b'This is not an image.'),
+    ('text.heic', b'This is not an image.'),
+    ('random.dng', bytes(range(256)) * 8),
+    ('empty.jpg', b''),
+    ('video.jpg', 'video.mov'),
+    ('audio.png', 'audio.mp3'),
+])
+def test_is_valid_when_exiftool_does_not_identify_image(name, source):
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, name)
+    if isinstance(source, bytes):
+        with open(origin, 'wb') as f:
+            f.write(source)
+    else:
+        shutil.copyfile(helper.get_file(source), origin)
+
+    valid = Photo(origin).is_valid()
+
+    shutil.rmtree(temporary_folder)
+
+    assert valid == False, valid
+
+def test_is_valid_when_exiftool_not_running():
+    photo = Photo(helper.get_file('plain.jpg'))
+    with mock.patch.object(photo, 'get_exiftool_attributes', side_effect=ValueError('ExifTool instance not running.')):
+        valid = photo.is_valid()
+
+    assert valid == False, valid

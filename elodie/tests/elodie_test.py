@@ -741,7 +741,7 @@ def test_import_file_text_with_number_in_metadata(metadata_line, expected_in_pat
     assert expected_in_path in dest_path, dest_path
 
 def test_import_file_with_very_large_image():
-    # Pillow refuses to open images this large, which crashed import
+    # Image libraries refuse to open images this large, which crashed import
     temporary_folder, folder = helper.create_working_folder()
     temporary_folder_destination, folder_destination = helper.create_working_folder()
 
@@ -779,6 +779,51 @@ def test_import_file_new_formats(file_name):
 
     assert dest_path is not None
     assert os.path.join('2019-07-Jul', 'Unknown Location', '2019-07-04_') in dest_path, dest_path
+
+def test_import_summary_invalid_file_is_error_not_duplicate():
+    # gh-507
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    shutil.copyfile(helper.get_file('invalid.jpg'), os.path.join(folder, 'invalid.jpg'))
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'plain.jpg'))
+
+    runner = CliRunner()
+    result_first = runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    result_second = runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert 'Success                        1' in result_first.output, result_first.output
+    assert 'Error                          1' in result_first.output, result_first.output
+    assert 'Duplicate, not imported        0' in result_first.output, result_first.output
+    assert 'Success                        0' in result_second.output, result_second.output
+    assert 'Error                          1' in result_second.output, result_second.output
+    assert 'Duplicate, not imported        1' in result_second.output, result_second.output
+
+@pytest.mark.parametrize('name', [asset['name'] for asset in helper.ASSETS['assets']])
+def test_import_raw_file(name):
+    # gh-507: includes raw files of new cameras which image libraries cannot read
+    file_path = helper.get_asset(name)
+    if file_path is None:
+        pytest.skip('{} could not be downloaded'.format(name))
+    expected_folder = time.strftime('%Y-%m-%b', helper.get_asset_date_taken(name))
+
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    origin = os.path.join(folder, name)
+    shutil.copyfile(file_path, origin)
+
+    helper.reset_dbs()
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+    helper.restore_dbs()
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert dest_path is not None
+    assert os.path.join(expected_folder, 'Unknown Location') in dest_path, dest_path
 
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()

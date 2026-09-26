@@ -42,6 +42,9 @@ class FileSystem(object):
         }
         self.cached_file_name_definition = None
         self.cached_folder_path_definition = None
+        # Set by process_file() if the file was not imported because it was
+        #  imported before, so it can be told apart from errors. gh-507
+        self.skipped_as_duplicate = False
         # Python3 treats the regex \s differently than Python2.
         # It captures some additional characters like the unicode checkmark \u2713.
         # See build failures in Python3 here.
@@ -614,6 +617,7 @@ class FileSystem(object):
                     _file,
                     checksum_file
                 ))
+                self.skipped_as_duplicate = True
                 return None
             else:
                 log.info('%s matched checksum but file not found at %s.' % (  # noqa
@@ -623,6 +627,7 @@ class FileSystem(object):
         return checksum
 
     def process_file(self, _file, destination, media, **kwargs):
+        self.skipped_as_duplicate = False
         move = False
         if('move' in kwargs):
             move = kwargs['move']

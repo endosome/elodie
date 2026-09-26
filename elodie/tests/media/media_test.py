@@ -379,3 +379,72 @@ def test_set_metadata_keeps_date_taken_from_modification_time(file_name, media_c
     assert date_taken_after == date_taken_before, date_taken_after
     assert mtime_after == 1584273600, mtime_after
 
+@pytest.mark.parametrize('file_name,media_class', [
+    ('plain.jpg', Photo),
+    ('valid.txt', Text),
+])
+def test_set_metadata_does_not_leave_backup(file_name, media_class):
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+
+    status = media_class(origin).set_album('Test Album')
+    album = media_class(origin).get_album()
+    folder_contents = os.listdir(folder)
+
+    shutil.rmtree(folder)
+
+    assert status == True, status
+    assert album == 'Test Album', album
+    assert folder_contents == [file_name], folder_contents
+
+def test_set_metadata_keeps_existing_backup():
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = os.path.join(folder, 'plain.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+    shutil.copyfile(helper.get_file('with-title.jpg'), origin + '_original')
+    backup_checksum = helper.checksum(origin + '_original')
+
+    status = Photo(origin).set_album('Test Album')
+    album = Photo(origin).get_album()
+    backup_checksum_after = helper.checksum(origin + '_original')
+
+    shutil.rmtree(folder)
+
+    assert status == True, status
+    assert album == 'Test Album', album
+    assert backup_checksum_after == backup_checksum
+
+@pytest.mark.parametrize('file_name,media_class', [
+    ('plain.jpg', Photo),
+    ('valid.txt', Text),
+])
+def test_defer_writes(file_name, media_class):
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = os.path.join(folder, file_name)
+    copy = os.path.join(folder, 'copy-' + file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+    shutil.copyfile(origin, copy)
+    checksum = helper.checksum(origin)
+
+    media = media_class(origin)
+    media.defer_writes()
+    status = media.set_album('Test Album')
+    album_in_memory = media.get_metadata()['album']
+    checksum_after = helper.checksum(origin)
+    write_status = media.write_deferred(copy)
+    album_in_copy = media_class(copy).get_album()
+    album_in_source = media_class(origin).get_album()
+
+    shutil.rmtree(folder)
+
+    assert status == True, status
+    assert album_in_memory == 'Test Album', album_in_memory
+    assert checksum_after == checksum
+    assert write_status == True, write_status
+    assert album_in_copy == 'Test Album', album_in_copy
+    assert album_in_source != 'Test Album', album_in_source
+

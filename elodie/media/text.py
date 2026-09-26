@@ -7,7 +7,6 @@ are tracked by Elodie.
 
 from json import dumps, loads
 import os
-from shutil import copy2
 import time
 
 # load modules
@@ -108,7 +107,7 @@ class Text(Base):
         super(Text, self).reset_cache()
 
     def set_album(self, name):
-        if self.set_metadata_if_dry_run(album=name):
+        if self.skip_write('set_album', (name,), album=name):
             return True
 
         status = self.write_metadata(album=name)
@@ -120,8 +119,8 @@ class Text(Base):
             return False
 
         seconds_since_epoch = time.mktime(passed_in_time.timetuple())
-        if self.set_metadata_if_dry_run(
-                date_taken=_gmtime(seconds_since_epoch)):
+        if self.skip_write('set_date_taken', (passed_in_time,),
+                           date_taken=_gmtime(seconds_since_epoch)):
             return True
 
         status = self.write_metadata(date_taken=seconds_since_epoch)
@@ -145,7 +144,8 @@ class Text(Base):
         if not name:
             name = os.path.basename(source)
 
-        if self.set_metadata_if_dry_run(original_name=name):
+        if self.skip_write('set_original_name', (name,),
+                           original_name=name):
             return True
 
         status = self.write_metadata(original_name=name)
@@ -153,8 +153,8 @@ class Text(Base):
         return status
 
     def set_location(self, latitude, longitude):
-        if self.set_metadata_if_dry_run(latitude=latitude,
-                                        longitude=longitude):
+        if self.skip_write('set_location', (latitude, longitude),
+                           latitude=latitude, longitude=longitude):
             return True
 
         status = self.write_metadata(latitude=latitude, longitude=longitude)
@@ -202,10 +202,6 @@ class Text(Base):
             metadata_line[name] = kwargs[name]
 
         metadata_as_json = dumps(metadata_line)
-        
-        # Create an _original copy just as we do with exiftool
-        # This is to keep all file processing logic in line with exiftool
-        copy2(source, source + '_original')
 
         # Files without a date in their metadata use the modification time
         #  as the date taken. Keep it so writing metadata does not change it.

@@ -9,6 +9,10 @@ import shutil
 import string
 import tempfile
 import time
+import unittest.mock as mock
+from datetime import datetime
+
+import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))))
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
@@ -17,6 +21,7 @@ import helper
 from elodie.media.audio import Audio
 from elodie.media.media import Media
 from elodie.media.photo import Photo
+from elodie.media.text import Text
 from elodie.media.video import Video
 
 os.environ['TZ'] = 'GMT'
@@ -303,3 +308,39 @@ def is_valid():
     media = Media()
 
     assert not media.is_valid()
+
+DRY_RUN_SETTERS = [
+    ('set_album', ('Test Album',), 'album', 'Test Album'),
+    ('set_date_taken', (datetime(2019, 7, 4, 12, 0, 0),), 'date_taken', helper.time_convert((2019, 7, 4, 12, 0, 0, 3, 185, 0))),
+    ('set_location', (11.1111111111, 99.9999999999), 'latitude', 11.1111111111),
+    ('set_original_name', ('original.name',), 'original_name', 'original.name'),
+]
+
+@mock.patch('elodie.constants.dry_run', True)
+@pytest.mark.parametrize('file_name,media_class,setter,args,key,expected', [
+    ('plain.jpg', Photo) + setter for setter in DRY_RUN_SETTERS + [('set_title', ('Test Title',), 'title', 'Test Title')]
+] + [
+    ('valid.txt', Text) + setter for setter in DRY_RUN_SETTERS
+])
+def test_set_metadata_dry_run(file_name, media_class, setter, args, key, expected):
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+    checksum_before = helper.checksum(origin)
+
+    media = media_class(origin)
+    status = getattr(media, setter)(*args)
+    value_in_memory = media.get_metadata()[key]
+    value_in_file = media_class(origin).get_metadata()[key]
+    checksum_after = helper.checksum(origin)
+    folder_contents = os.listdir(folder)
+
+    shutil.rmtree(folder)
+
+    assert status == True, status
+    assert value_in_memory == expected, value_in_memory
+    assert value_in_file != expected, value_in_file
+    assert checksum_after == checksum_before
+    assert folder_contents == [file_name], folder_contents
+

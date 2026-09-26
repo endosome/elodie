@@ -376,6 +376,95 @@ def test_update_dry_run_does_not_create_directories():
     assert '[DRY-RUN] Would create directory' in result.output, result.output
     assert directories_after == directories_before, directories_after
 
+def _files_state(folder):
+    return sorted(
+        (
+            os.path.join(dirname, filename),
+            helper.checksum(os.path.join(dirname, filename)),
+            os.stat(os.path.join(dirname, filename)).st_ctime_ns,
+        )
+        for dirname, dirnames, filenames in os.walk(folder)
+        for filename in filenames
+    )
+
+def _dry_run_destination(output, operation, source):
+    prefix = '[DRY-RUN] Would %s: %s -> ' % (operation, source)
+    for line in output.splitlines():
+        if line.startswith(prefix):
+            return line[len(prefix):]
+    return None
+
+@mock.patch('elodie.constants.dry_run', False)
+@pytest.mark.parametrize('file_name,options', [
+    ('plain.jpg', ['--album', 'Test Album']),
+    ('plain.jpg', ['--time', '2019-07-04 12:00:00']),
+    ('plain.jpg', ['--title', 'Test Title']),
+    ('valid.txt', ['--album', 'Test Album']),
+    ('valid.txt', ['--time', '2019-07-04 12:00:00']),
+])
+def test_update_dry_run_does_not_modify_files(file_name, options):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+
+    state_before = _files_state(folder_destination)
+    runner = CliRunner()
+    result_dry_run = runner.invoke(elodie._update, options + ['--dry-run', dest_path])
+    state_after = _files_state(folder_destination)
+    dry_run_destination = _dry_run_destination(result_dry_run.output, 'move', dest_path)
+
+    # The dry run should report the destination the update then uses
+    result = runner.invoke(elodie._update, options + [dest_path])
+    dry_run_destination_exists = os.path.isfile(dry_run_destination)
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert result_dry_run.exit_code == 0, result_dry_run.output
+    assert state_after == state_before, (state_before, state_after)
+    assert dry_run_destination is not None, result_dry_run.output
+    assert dry_run_destination != dest_path, dry_run_destination
+    assert result.exit_code == 0, result.output
+    assert dry_run_destination_exists, dry_run_destination
+
+@mock.patch('elodie.constants.dry_run', False)
+@pytest.mark.parametrize('file_name,options', [
+    ('plain.jpg', ['--album-from-folder']),
+    ('plain.jpg', ['--time', '2019-07-04 12:00:00']),
+    ('valid.txt', ['--album-from-folder']),
+    ('valid.txt', ['--time', '2019-07-04 12:00:00']),
+])
+def test_import_dry_run_does_not_modify_source(file_name, options):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    source_folder = os.path.join(folder, 'Trip')
+    os.mkdir(source_folder)
+    origin = os.path.join(source_folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+
+    state_before = _files_state(folder)
+    runner = CliRunner()
+    result_dry_run = runner.invoke(elodie._import, ['--destination', folder_destination, '--dry-run'] + options + [source_folder])
+    state_after = _files_state(folder)
+    dry_run_destination = _dry_run_destination(result_dry_run.output, 'copy', origin)
+
+    # The dry run should report the destination the import then uses
+    result = runner.invoke(elodie._import, ['--destination', folder_destination] + options + [source_folder])
+    dry_run_destination_exists = os.path.isfile(dry_run_destination)
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert result_dry_run.exit_code == 0, result_dry_run.output
+    assert state_after == state_before, (state_before, state_after)
+    assert dry_run_destination is not None, result_dry_run.output
+    assert result.exit_code == 0, result.output
+    assert dry_run_destination_exists, dry_run_destination
+
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()
     folder_destination = '{}/destination'.format(folder)

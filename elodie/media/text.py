@@ -108,6 +108,9 @@ class Text(Base):
         super(Text, self).reset_cache()
 
     def set_album(self, name):
+        if self.set_metadata_if_dry_run(album=name):
+            return True
+
         status = self.write_metadata(album=name)
         self.reset_cache()
         return status
@@ -117,6 +120,10 @@ class Text(Base):
             return False
 
         seconds_since_epoch = time.mktime(passed_in_time.timetuple())
+        if self.set_metadata_if_dry_run(
+                date_taken=_gmtime(seconds_since_epoch)):
+            return True
+
         status = self.write_metadata(date_taken=seconds_since_epoch)
         self.reset_cache()
         return status
@@ -138,11 +145,18 @@ class Text(Base):
         if not name:
             name = os.path.basename(source)
 
+        if self.set_metadata_if_dry_run(original_name=name):
+            return True
+
         status = self.write_metadata(original_name=name)
         self.reset_cache()
         return status
 
     def set_location(self, latitude, longitude):
+        if self.set_metadata_if_dry_run(latitude=latitude,
+                                        longitude=longitude):
+            return True
+
         status = self.write_metadata(latitude=latitude, longitude=longitude)
         self.reset_cache()
         return status

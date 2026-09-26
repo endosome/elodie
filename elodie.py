@@ -362,8 +362,8 @@ def _update(album, location, time, title, paths, debug, dry_run):
         if title:
             # We call get_metadata() to cache it before making any changes
             metadata = media.get_metadata()
-            title_update_status = media.set_title(title)
             original_title = metadata['title']
+            title_update_status = media.set_title(title)
             if title_update_status and original_title:
                 # @TODO: We should move this to a shared method since
                 # FileSystem.get_file_name() does it too.
@@ -373,8 +373,13 @@ def _update(album, location, time, title, paths, debug, dry_run):
             updated = True
 
         if updated:
-            updated_media = Media.get_class_by_file(current_file,
-                                                    get_all_subclasses())
+            if constants.dry_run:
+                # Nothing was written to the file so we use the metadata
+                #  which was updated in memory.
+                updated_media = media
+            else:
+                updated_media = Media.get_class_by_file(current_file,
+                                                        get_all_subclasses())
             # See comments above on why we have to do this when titles
             # get updated.
             if remove_old_title_from_name and len(original_title) > 0:

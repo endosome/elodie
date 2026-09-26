@@ -12,8 +12,10 @@ from __future__ import print_function
 
 import os
 import six
+from time import mktime
 
 # load modules
+from elodie.compatability import _gmtime
 from elodie.external.pyexiftool import ExifTool
 from elodie.media.base import Base
 
@@ -242,6 +244,9 @@ class Media(Base):
         if(not self.is_valid()):
             return None
 
+        if self.set_metadata_if_dry_run(album=album):
+            return True
+
         tags = {self.album_keys[0]: album}
         status = self.__set_tags(tags)
         self.reset_cache()
@@ -256,6 +261,10 @@ class Media(Base):
         """
         if(time is None):
             return False
+
+        if self.set_metadata_if_dry_run(
+                date_taken=_gmtime(mktime(time.timetuple()))):
+            return True
 
         tags = {}
         formatted_time = time.strftime('%Y:%m:%d %H:%M:%S')
@@ -291,6 +300,10 @@ class Media(Base):
         # The lat/lon _keys array has an order of precedence.
         # The first key is writable and we will give the writable
         #   key precence when reading.
+        if self.set_metadata_if_dry_run(latitude=latitude,
+                                        longitude=longitude):
+            return True
+
         tags = {
             self.latitude_keys[0]: latitude,
             self.longitude_keys[0]: longitude,
@@ -328,6 +341,9 @@ class Media(Base):
         if not name:
             name = os.path.basename(source)
 
+        if self.set_metadata_if_dry_run(original_name=name):
+            return True
+
         tags = {self.original_name_key: name}
         status = self.__set_tags(tags)
         self.reset_cache()
@@ -344,6 +360,9 @@ class Media(Base):
 
         if(title is None):
             return None
+
+        if self.set_metadata_if_dry_run(title=title):
+            return True
 
         tags = {self.title_key: title}
         status = self.__set_tags(tags)

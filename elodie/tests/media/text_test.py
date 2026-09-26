@@ -140,6 +140,38 @@ def test_get_date_taken_before_1970(monkeypatch):
 
     assert date_taken == (1960, 1, 1, 12, 0, 0, 4, 1, 0), date_taken
 
+def test_set_title():
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = '%s/text.txt' % folder
+    shutil.copyfile(helper.get_file('valid.txt'), origin)
+
+    text = Text(origin)
+    metadata = text.get_metadata()
+
+    with open(origin, 'r') as f:
+        f.readline()
+        contents = f.read()
+
+    title = 'Test Title'
+    assert title != metadata['title'], metadata['title']
+
+    status = text.set_title(title)
+    assert status == True, status
+
+    text_new = Text(origin)
+    metadata_new = text_new.get_metadata()
+
+    with open(origin, 'r') as f:
+        f.readline()
+        contents_new = f.read()
+        assert contents == contents_new, contents_new
+
+    shutil.rmtree(folder)
+
+    assert title == metadata_new['title'], metadata_new
+    assert metadata['album'] == metadata_new['album'], metadata_new
+
 def test_set_date_taken():
     temporary_folder, folder = helper.create_working_folder()
 

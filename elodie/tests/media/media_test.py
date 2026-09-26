@@ -314,11 +314,12 @@ DRY_RUN_SETTERS = [
     ('set_date_taken', (datetime(2019, 7, 4, 12, 0, 0),), 'date_taken', helper.time_convert((2019, 7, 4, 12, 0, 0, 3, 185, 0))),
     ('set_location', (11.1111111111, 99.9999999999), 'latitude', 11.1111111111),
     ('set_original_name', ('original.name',), 'original_name', 'original.name'),
+    ('set_title', ('Test Title',), 'title', 'Test Title'),
 ]
 
 @mock.patch('elodie.constants.dry_run', True)
 @pytest.mark.parametrize('file_name,media_class,setter,args,key,expected', [
-    ('plain.jpg', Photo) + setter for setter in DRY_RUN_SETTERS + [('set_title', ('Test Title',), 'title', 'Test Title')]
+    ('plain.jpg', Photo) + setter for setter in DRY_RUN_SETTERS
 ] + [
     ('valid.txt', Text) + setter for setter in DRY_RUN_SETTERS
 ])
@@ -350,10 +351,11 @@ KEEP_DATE_SETTERS = [
     ('set_album', ('Test Album',), 'album', 'Test Album'),
     ('set_location', (11.1111111111, 99.9999999999), 'latitude', 11.1111111111),
     ('set_original_name', ('original.name',), 'original_name', 'original.name'),
+    ('set_title', ('Test Title',), 'title', 'Test Title'),
 ]
 
 @pytest.mark.parametrize('file_name,media_class,setter,args,key,expected', [
-    ('no-exif.jpg', Photo) + setter for setter in KEEP_DATE_SETTERS + [('set_title', ('Test Title',), 'title', 'Test Title')]
+    ('no-exif.jpg', Photo) + setter for setter in KEEP_DATE_SETTERS
 ] + [
     ('valid-without-header.txt', Text) + setter for setter in KEEP_DATE_SETTERS
 ])

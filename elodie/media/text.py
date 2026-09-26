@@ -152,6 +152,17 @@ class Text(Base):
         self.reset_cache()
         return status
 
+    def set_title(self, title):
+        if title is None:
+            return None
+
+        if self.skip_write('set_title', (title,), title=title):
+            return True
+
+        status = self.write_metadata(title=title)
+        self.reset_cache()
+        return status
+
     def set_location(self, latitude, longitude):
         if self.skip_write('set_location', (latitude, longitude),
                            latitude=latitude, longitude=longitude):

@@ -5,9 +5,12 @@ import os
 import sys
 
 from datetime import datetime
+import gc
 import shutil
 import tempfile
 import time
+import unittest.mock as mock
+import warnings
 
 import pytest
 
@@ -448,3 +451,91 @@ def _test_photo_type_set(type, date):
     assert metadata['date_taken'] == helper.time_convert(date), '{} date {}'.format(type, metadata['date_taken'])
     assert helper.isclose(metadata['latitude'], 11.1111111111), '{} lat {}'.format(type, metadata['latitude'])
     assert helper.isclose(metadata['longitude'], 99.9999999999), '{} lon {}'.format(type, metadata['latitude'])
+
+def _count_image_open():
+    """Patch Image.open to record each call and the images it returned."""
+    from PIL import Image
+    opened = []
+    real_open = Image.open
+
+    def counting_open(*args, **kwargs):
+        opened.append(None)
+        opened[-1] = real_open(*args, **kwargs)
+        return opened[-1]
+
+    return (mock.patch.object(Image, 'open', counting_open), opened)
+
+def test_is_valid_closes_file():
+    patcher, opened = _count_image_open()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        with patcher:
+            valid = Photo(helper.get_file('plain.jpg')).is_valid()
+        gc.collect()
+
+    resource_warnings = [w for w in caught if issubclass(w.category, ResourceWarning)]
+    assert valid == True, valid
+    assert len(opened) == 1, opened
+    assert opened[0].fp is None, 'File was not closed'
+    assert resource_warnings == [], resource_warnings
+
+def test_is_valid_opens_file_once():
+    # is_valid() is called for each attribute of the file
+    patcher, opened = _count_image_open()
+    with patcher:
+        photo = Photo(helper.get_file('plain.jpg'))
+        photo.get_metadata()
+        photo.get_album()
+        photo.get_title()
+        photo.get_date_taken()
+        valid = photo.is_valid()
+
+    assert valid == True, valid
+    assert len(opened) == 1, opened
+
+def test_is_valid_after_reset_cache():
+    patcher, opened = _count_image_open()
+    with patcher:
+        photo = Photo(helper.get_file('plain.jpg'))
+        valid = photo.is_valid()
+        valid_cached = photo.is_valid()
+        photo.reset_cache()
+        valid_after_reset = photo.is_valid()
+        photo.source = helper.get_file('invalid.jpg')
+        valid_other_file = photo.is_valid()
+        valid_other_file_cached = photo.is_valid()
+
+    assert valid == True, valid
+    assert valid_cached == True, valid_cached
+    assert valid_after_reset == True, valid_after_reset
+    assert valid_other_file == False, valid_other_file
+    assert valid_other_file_cached == False, valid_other_file_cached
+    # Once for plain.jpg, again after reset_cache() and for invalid.jpg
+    assert len(opened) == 3, opened
+
+def test_is_valid_does_not_open_file_with_other_extension():
+    patcher, opened = _count_image_open()
+    with patcher:
+        valid = Photo(helper.get_file('text.txt')).is_valid()
+
+    assert valid == False, valid
+    assert opened == [], opened
+
+@pytest.mark.parametrize('width,height', [
+    (10000, 10000),  # Pillow warns above ~89 million pixels
+    (20000, 10000),  # Pillow refuses to open above ~179 million pixels
+])
+def test_is_valid_with_very_large_image(width, height):
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'panorama.png')
+    helper.create_png(origin, width, height)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        valid = Photo(origin).is_valid()
+
+    shutil.rmtree(folder)
+
+    assert valid == True, valid
+    assert [w for w in caught if 'DecompressionBomb' in w.category.__name__] == [], caught
+

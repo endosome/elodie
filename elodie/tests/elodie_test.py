@@ -740,6 +740,25 @@ def test_import_file_text_with_number_in_metadata(metadata_line, expected_in_pat
     assert dest_path is not None
     assert expected_in_path in dest_path, dest_path
 
+def test_import_file_with_very_large_image():
+    # Pillow refuses to open images this large, which crashed import
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = '%s/panorama.png' % folder
+    helper.create_png(origin, 20000, 10000)
+
+    helper.reset_dbs()
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+    helper.restore_dbs()
+
+    dest_path_exists = dest_path is not None and os.path.isfile(dest_path)
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert dest_path_exists, dest_path
+
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()
     folder_destination = '{}/destination'.format(folder)

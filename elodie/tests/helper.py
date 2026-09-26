@@ -5,7 +5,9 @@ import hashlib
 import os
 import random
 import string
+import struct
 import tempfile
+import zlib
 import re
 import time
 import urllib
@@ -163,6 +165,27 @@ def windows_open(file, mode='r', *args, **kwargs):
     if 'b' not in mode and 'encoding' not in kwargs:
         kwargs['encoding'] = 'cp1252'
     return open(file, mode, *args, **kwargs)
+
+# create_png(file_path, width, height)
+# Writes a black and white PNG of the given size. Large images compress to a
+#  few kilobytes so we do not need to store them in the repository.
+
+def create_png(file_path, width, height):
+    def chunk(chunk_type, data):
+        return (
+            struct.pack('>I', len(data)) + chunk_type + data +
+            struct.pack('>I', zlib.crc32(chunk_type + data) & 0xffffffff)
+        )
+
+    row = b'\x00' + b'\x00' * ((width + 7) // 8)
+    header = struct.pack('>IIBBBBB', width, height, 1, 0, 0, 0, 0)
+    with open(file_path, 'wb') as f:
+        f.write(
+            b'\x89PNG\r\n\x1a\n' +
+            chunk(b'IHDR', header) +
+            chunk(b'IDAT', zlib.compress(row * height, 9)) +
+            chunk(b'IEND', b'')
+        )
 
 def time_convert(s_time):
     if is_windows():

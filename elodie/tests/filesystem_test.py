@@ -1804,3 +1804,122 @@ def test_process_file_dry_run_does_not_create_directories():
     assert destination is not None
     assert destination_contents == [], destination_contents
 
+# gh-534: folders which combine placeholders with each other or other text
+PLACE_NAME = {'default': 'Chiang Mai', 'city': 'Chiang Mai', 'state': 'Chiang Mai Province', 'country': 'Thailand'}
+
+def _get_folder_path_with_config(config_file, directory, file_name='plain.jpg', album=None, camera_make=None):
+    with open(config_file, 'w') as f:
+        f.write('[Directory]\n' + directory + '\n')
+    if hasattr(load_config, 'config'):
+        del load_config.config
+
+    filesystem = FileSystem()
+    metadata = Photo(helper.get_file(file_name)).get_metadata()
+    metadata['album'] = album
+    metadata['camera_make'] = camera_make
+    with mock.patch('elodie.geolocation.place_name', return_value=PLACE_NAME):
+        path = filesystem.get_folder_path(metadata)
+        path_definition = filesystem.get_folder_path_definition()
+
+    if hasattr(load_config, 'config'):
+        del load_config.config
+    return (path, path_definition)
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-combined-placeholders' % gettempdir())
+def test_get_folder_path_with_placeholders_combined_in_one_folder(mock_get_config_file):
+    path, path_definition = _get_folder_path_with_config(
+        mock_get_config_file.return_value,
+        'month=%m\nyear=%Y\nlocation=%country, %city\nfull_path=%year/%month, %location'
+    )
+
+    assert path_definition == [[('year', '%Y')], [('%month, %location', '')]], path_definition
+    assert path == os.path.join('2015', '12, Thailand, Chiang Mai'), path
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-combined-placeholders-with-dash' % gettempdir())
+def test_get_folder_path_with_placeholders_combined_with_dash(mock_get_config_file):
+    # Example from the Readme
+    path, path_definition = _get_folder_path_with_config(
+        mock_get_config_file.return_value,
+        'location=%city, %state\nmonth=%m\nyear=%Y\nfull_path=%year-%month/%location'
+    )
+
+    assert path == os.path.join('2015-12', 'Chiang Mai, Chiang Mai Province'), path
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-custom-with-masks' % gettempdir())
+def test_get_folder_path_with_custom_using_masks(mock_get_config_file):
+    path, path_definition = _get_folder_path_with_config(
+        mock_get_config_file.return_value,
+        'month=%m\nyear=%Y\nlocation=%country, %city\ncustom=%month, %location\nfull_path=%year/%custom'
+    )
+
+    assert path == os.path.join('2015', '12, Thailand, Chiang Mai'), path
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-combined-placeholders-fallback' % gettempdir())
+def test_get_folder_path_with_combined_placeholders_fallback(mock_get_config_file):
+    # A combined folder is only used if all of its placeholders have a value
+    directory = 'month=%m\nyear=%Y\nfull_path=%year/%album - %month|%month'
+    path_with_album, path_definition = _get_folder_path_with_config(
+        mock_get_config_file.return_value, directory, album='Test Album'
+    )
+    path_without_album, path_definition = _get_folder_path_with_config(
+        mock_get_config_file.return_value, directory
+    )
+
+    assert path_with_album == os.path.join('2015', 'Test Album - 12'), path_with_album
+    assert path_without_album == os.path.join('2015', '12'), path_without_album
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-combined-placeholders-fallback-string' % gettempdir())
+def test_get_folder_path_with_combined_placeholders_fallback_string(mock_get_config_file):
+    directory = 'year=%Y\nfull_path=%year/%camera_make %album|"Unknown"'
+    path_with_values, path_definition = _get_folder_path_with_config(
+        mock_get_config_file.return_value, directory, album='Test Album', camera_make='Canon'
+    )
+    path_with_some_values, path_definition = _get_folder_path_with_config(
+        mock_get_config_file.return_value, directory, camera_make='Canon'
+    )
+
+    assert path_with_values == os.path.join('2015', 'Canon Test Album'), path_with_values
+    assert path_with_some_values == os.path.join('2015', 'Unknown'), path_with_some_values
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-combined-placeholders-partial' % gettempdir())
+def test_get_folder_path_with_combined_placeholders_partial_without_fallback(mock_get_config_file):
+    # Without a fallback the values which exist are used
+    path, path_definition = _get_folder_path_with_config(
+        mock_get_config_file.return_value,
+        'year=%Y\nfull_path=%year/%camera_make %album',
+        camera_make='Canon'
+    )
+
+    assert path == os.path.join('2015', 'Canon'), path
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-fallback-with-spaces' % gettempdir())
+def test_get_folder_path_with_spaces_around_fallback(mock_get_config_file):
+    path, path_definition = _get_folder_path_with_config(
+        mock_get_config_file.return_value,
+        'year=%Y\nlocation=%city\nfull_path=%year/%album | %location',
+        album='Test Album'
+    )
+
+    assert path_definition == [[('year', '%Y')], [('album', ''), ('location', '%city')]], path_definition
+    assert path == os.path.join('2015', 'Test Album'), path
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-named-custom-in-fallback' % gettempdir())
+def test_get_folder_path_with_named_custom_in_fallback(mock_get_config_file):
+    # Unchanged: %custom is used if any of its placeholders has a value
+    path, path_definition = _get_folder_path_with_config(
+        mock_get_config_file.return_value,
+        'date=%Y\nlocation=%city\ncustom=%date %album\nfull_path=%custom|%location'
+    )
+
+    assert path == '2015', path
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-partial-placeholder-name' % gettempdir())
+def test_get_folder_path_with_partial_placeholder_name(mock_get_config_file):
+    # %dat is not %date
+    path, path_definition = _get_folder_path_with_config(
+        mock_get_config_file.return_value,
+        'date=%Y\nfull_path=%dat|"Unknown"'
+    )
+
+    assert path == 'Unknown', path
+

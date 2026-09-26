@@ -265,6 +265,12 @@ year=%Y
 full_path=%year-%month/%location
 # -> 2015-12/Sunnyvale, California
 
+location=%country, %city
+month=%m
+year=%Y
+full_path=%year/%month, %location
+# -> 2015/12, United States, Sunnyvale
+
 date=%Y
 location=%city, %state
 custom=%date %album
@@ -287,6 +293,8 @@ full_path=%month/%year/%album|%location|%"Beats me"
 ```
 
 What this asks me to do is to name the last folder the same as the album I find in EXIF. If I don't find an album in EXIF then I should use the location. If there's no GPS in the EXIf then I should name the last folder `Beats me`.
+
+A fallback which combines placeholders, like `%album - %month`, is only used if all of its placeholders have a value. For example `full_path=%year/%album - %month|%month` results in `2015/Birthday Party - 12` for a photo with an album and in `2015/12` for one without.
 
 #### How folder customization works
 
@@ -316,6 +324,8 @@ In addition to my built-in and date placeholders you can combine them into a sin
 * `%location` can be used to combine multiple values of `%city`, `%state` and `%country`. For example, `location=%city, %state` would result in folder names like `Sunnyvale, California`.
 * `%date` can be used to combine multiple values from [the standard Python time directives](https://docs.python.org/2/library/datetime.html#strftime-and-strptime-behavior). For example, `date=%Y-%m` would result in folder names like `2015-12`.
 * `%custom` can be used to combine multiple values from anything else. Think of it as a catch-all when `%location` and `%date` don't meet your needs.
+
+You can also combine placeholders and other text directly in `full_path`. For example, `full_path=%year-%month/%location` or `full_path=%year/%month, %location`. Each placeholder uses the value you assigned to it, like `month=%m`.
 
 #### How file customization works
 

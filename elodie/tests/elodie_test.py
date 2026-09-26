@@ -673,6 +673,49 @@ def test_update_title_twice(file_name, media_class):
     assert os.path.dirname(files_after_second[0]) == os.path.dirname(dest_path), files_after_second
     assert title == 'Second Title', title
 
+@mock.patch('elodie.constants.dry_run', False)
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-update-combined-placeholders' % gettempdir())
+def test_update_time_with_placeholders_combined_in_one_folder(mock_get_config_file):
+    # update finds the root of the library by the number of folders gh-534
+    with open(mock_get_config_file.return_value, 'w') as f:
+        f.write("""
+[Directory]
+month=%m
+year=%Y
+location=%city
+full_path=%year/%month, %location
+        """)
+    if hasattr(load_config, 'config'):
+        del load_config.config
+    elodie.FILESYSTEM.cached_folder_path_definition = None
+
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = os.path.join(folder, 'plain.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    try:
+        dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+        runner = CliRunner()
+        result = runner.invoke(elodie._update, ['--time', '2019-07-04 12:00:00', dest_path])
+        files = [
+            os.path.relpath(os.path.join(dirname, filename), folder_destination)
+            for dirname, dirnames, filenames in os.walk(folder_destination)
+            for filename in filenames
+        ]
+    finally:
+        if hasattr(load_config, 'config'):
+            del load_config.config
+        elodie.FILESYSTEM.cached_folder_path_definition = None
+        shutil.rmtree(folder)
+        shutil.rmtree(folder_destination)
+
+    assert os.path.relpath(dest_path, folder_destination).startswith(os.path.join('2015', '12, ')), dest_path
+    assert result.exit_code == 0, result.output
+    assert len(files) == 1, files
+    assert files[0].startswith(os.path.join('2019', '07, ')), files
+
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()
     folder_destination = '{}/destination'.format(folder)

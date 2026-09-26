@@ -317,6 +317,8 @@ class FileSystem(object):
 
         Each element in the list represents a folder.
         Fallback folders are supported and are nested lists.
+        A folder which combines placeholders with each other or with other
+        text (i.e. %year-%month) is kept as is and evaluated like %custom.
         Return values take the following form.
         [
             ('date', '%Y-%m-%d'),
@@ -324,7 +326,8 @@ class FileSystem(object):
                 ('location', '%city'),
                 ('album', ''),
                 ('"Unknown Location", '')
-            ]
+            ],
+            [('%month, %location', '')]
         ]
 
         :returns: list
@@ -355,20 +358,58 @@ class FileSystem(object):
 
         self.cached_folder_path_definition = []
         for part in path_parts:
-            part = part.replace('%', '')
-            if part in config_directory:
-                self.cached_folder_path_definition.append(
-                    [(part, config_directory[part])]
-                )
-            else:
-                this_part = []
-                for p in part.split('|'):
-                    this_part.append(
-                        (p, config_directory[p] if p in config_directory else '')
-                    )
-                self.cached_folder_path_definition.append(this_part)
+            this_part = []
+            for p in part.split('|'):
+                p = p.strip()
+                # The % is optional for fallback strings (%"foo" or "foo").
+                name = p[1:] if p.startswith('%') else p
+                if '%' in name and not self.is_fallback_string(name):
+                    # Placeholders combined with each other or other text,
+                    #  i.e. %year-%month or %month, %location. gh-534
+                    this_part.append((p, ''))
+                else:
+                    mask = ''
+                    if name in config_directory:
+                        mask = config_directory[name]
+                    this_part.append((name, mask))
+            self.cached_folder_path_definition.append(this_part)
 
         return self.cached_folder_path_definition
+
+    def is_fallback_string(self, part):
+        """Check if a part of a folder is a fallback string (i.e. "foo").
+
+        :param str part: Part of the folder path definition.
+        :returns: bool
+        """
+        return len(part) > 1 and part.startswith('"') and part.endswith('"')
+
+    def is_combined_part(self, part):
+        """Check if a part of a folder path definition combines placeholders
+        with each other or other text (i.e. %year-%month).
+
+        :param str part: Part of the folder path definition.
+        :returns: bool
+        """
+        return '%' in part and not self.is_fallback_string(part)
+
+    def get_folder_path_mask(self, part):
+        """Returns the mask of a placeholder used within %custom or combined
+        with other placeholders in a folder (i.e. %year-%month).
+
+        :param str part: Name of the placeholder (i.e. month from %month).
+        :returns: str
+        """
+        config = load_config()
+        config_directory = self.default_folder_path_definition
+        if 'Directory' in config:
+            config_directory = config['Directory']
+
+        if part in config_directory:
+            return config_directory[part]
+        elif part in ('city', 'state', 'country'):
+            return '%{}'.format(part)
+        return ''
 
     def get_folder_path(self, metadata, path_parts=None):
         """Given a media's metadata this function returns the folder path as a string.
@@ -386,14 +427,29 @@ class FileSystem(object):
             #  My Album - when an album exists
             #  Sunnyvale - when no album exists but a city exists
             #  Unknown Location - when neither an album nor location exist
+            # A folder which combines placeholders (i.e. %album - %month) is
+            #  only used if all of them have a value. If no fallback does we
+            #  use the first one which has any value. gh-534
+            partial_path = None
             for this_part in path_part:
                 part, mask = this_part
-                this_path = self.get_dynamic_path(part, mask, metadata)
-                if this_path:
+                if self.is_combined_part(part):
+                    this_path, values = self.parse_combined_part(
+                        part, metadata)
+                    complete = all(values)
+                else:
+                    this_path = self.get_dynamic_path(part, mask, metadata)
+                    complete = True
+                if this_path and complete:
                     path.append(this_path.strip())
                     # We break as soon as we have a value to append
                     # Else we continue for fallbacks
                     break
+                if this_path and partial_path is None:
+                    partial_path = this_path
+            else:
+                if partial_path:
+                    path.append(partial_path.strip())
         return os.path.join(*path)
 
     def get_dynamic_path(self, part, mask, metadata):
@@ -407,16 +463,11 @@ class FileSystem(object):
 
         # Each part has its own custom logic and we evaluate a single part and return
         #  the evaluated string.
-        if part in ('custom'):
-            custom_parts = re.findall('(%[a-z_]+)', mask)
-            folder = mask
-            for i in custom_parts:
-                folder = folder.replace(
-                    i,
-                    self.get_dynamic_path(i[1:], i, metadata)
-                )
-            return folder
-        elif part in ('date'):
+        if part == 'custom':
+            return self.parse_custom_mask(mask, metadata)[0]
+        elif self.is_combined_part(part):
+            return self.parse_combined_part(part, metadata)[0]
+        elif part == 'date':
             config = load_config()
             # If Directory is in the config we assume full_path and its
             #  corresponding values (date, location) are also present
@@ -445,11 +496,47 @@ class FileSystem(object):
         elif part in ('album', 'camera_make', 'camera_model'):
             if metadata[part]:
                 return metadata[part]
-        elif part.startswith('"') and part.endswith('"'):
+        elif self.is_fallback_string(part):
             # Fallback string
             return part[1:-1]
 
         return ''
+
+    def parse_custom_mask(self, mask, metadata):
+        """Replace each placeholder in a mask (i.e. %month, %location) with
+        its value using the mask of the placeholder.
+
+        :param str mask: Mask with placeholders and other text.
+        :param dict metadata: Metadata dictionary.
+        :returns: tuple of the folder name and the list of values.
+        """
+        values = []
+
+        def replace(match):
+            value = self.get_dynamic_path(
+                match.group(1),
+                self.get_folder_path_mask(match.group(1)),
+                metadata
+            )
+            values.append(value)
+            return value
+
+        folder = re.sub(r'%([a-z_]+)', replace, mask)
+        return (folder, values)
+
+    def parse_combined_part(self, part, metadata):
+        """Evaluate a folder which combines placeholders (i.e. %year-%month).
+
+        :param str part: Part of the folder path definition.
+        :param dict metadata: Metadata dictionary.
+        :returns: tuple of the folder name, which is '' if none of the
+            placeholders has a value so a fallback is used, and the list of
+            values.
+        """
+        folder, values = self.parse_custom_mask(part, metadata)
+        if values and not any(values):
+            folder = ''
+        return (folder, values)
 
     def parse_mask_for_location(self, mask, location_parts, place_name):
         """Takes a mask for a location and interpolates the actual place names.

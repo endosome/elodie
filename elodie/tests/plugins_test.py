@@ -79,6 +79,8 @@ plugins=DNE
         del load_config.config
 
     assert plugins.plugins == [], plugins.plugins
+
+    assert plugins.plugins == [], plugins.plugins
     assert len(plugins.classes) == 0, len(plugins.classes)
 
 @mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-load-plugins-many' % gettempdir())

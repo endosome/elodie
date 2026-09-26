@@ -1,6 +1,6 @@
 {
   "_comment": "Test files published as releases of https://github.com/endosome/elodie-test-assets. See helper.get_asset().",
-  "version": "v1",
+  "version": "v2",
   "url": "https://github.com/endosome/elodie-test-assets/releases/download/{version}/{name}",
   "assets": [
     {
@@ -51,6 +51,83 @@
       "size": 3249664,
       "camera": "Panasonic DMC-LX7",
       "date_time_original": "2023:11:18 09:49:12"
+    },
+    {
+      "name": "raw-canon-eos-r6.cr3",
+      "sha256": "74abb0a113d075ad9887a058082f40dd2a938c4813a08474d82356f11a027778",
+      "size": 5273174,
+      "camera": "Canon EOS R6",
+      "date_time_original": "2021:05:12 12:21:21"
+    },
+    {
+      "name": "raw-nikon-coolpix-p1000.nrw",
+      "sha256": "1d9470ee083f914e51aa0be782161b432f27f87dbef551a59ec435f5dbc289dd",
+      "size": 26472704,
+      "camera": "Nikon COOLPIX P1000",
+      "date_time_original": "2019:07:07 05:25:06"
+    },
+    {
+      "name": "raw-fujifilm-x-s10.raf",
+      "sha256": "9419d1408ebf850395e5dd563beb96309466546252caf541466034c9cb7e9724",
+      "size": 18675216,
+      "camera": "Fujifilm X-S10",
+      "date_time_original": "2020:11:28 18:42:31"
+    },
+    {
+      "name": "raw-olympus-e-m1markii.orf",
+      "sha256": "0b433019e5fa61548d7eb0eb7bb90894251542c056da72355202382696d0ceb8",
+      "size": 17260285,
+      "camera": "Olympus E-M1MarkII",
+      "date_time_original": "2017:11:30 20:21:16"
+    },
+    {
+      "name": "raw-pentax-k10d.pef",
+      "sha256": "e35ae4154a468be3154f5f462e884ba5941f010d3e8f23d347fbec14809f44d3",
+      "size": 9561139,
+      "camera": "Pentax K10D",
+      "date_time_original": "2014:08:13 13:01:27"
+    },
+    {
+      "name": "raw-samsung-nx500.srw",
+      "sha256": "156e43118811bcecb6fcc600b5f41ee1773c4f00b6a5b2dd72e177e35f6596ab",
+      "size": 20750652,
+      "camera": "Samsung NX500",
+      "date_time_original": "2015:02:03 20:06:19"
+    },
+    {
+      "name": "raw-panasonic-dmc-fz8.raw",
+      "sha256": "a11f1534f3092a4d5f2b57d182f6b06f8d26cf766eb463c3e02b26a338b63b8b",
+      "size": 11615232,
+      "camera": "Panasonic DMC-FZ8",
+      "date_time_original": "2018:01:26 14:51:03"
+    },
+    {
+      "name": "raw-phase-one-p40plus.iiq",
+      "sha256": "61aa32c5947d386f0d5ee465c5183185df6c9cd7ff7eb66ffec12e84b487878c",
+      "size": 11172571,
+      "camera": "Phase One P40+",
+      "date_time_original": "2025:05:18 12:59:02"
+    },
+    {
+      "name": "raw-sigma-dp1.x3f",
+      "sha256": "44508f7df4191aacaecb6461e1841dae002e5b71a4f95a00aa3f52d1c6d6bc5f",
+      "size": 10317264,
+      "camera": "Sigma DP1",
+      "date_time_original": "2010:02:01 08:27:32"
+    },
+    {
+      "name": "raw-epson-r-d1.erf",
+      "sha256": "09d8e533d93116294a9f3e161ed868e929454c7b946e083b644bd6bb75bcb5e4",
+      "size": 9958994,
+      "camera": "Epson R-D1",
+      "date_time_original": "2010:02:08 19:47:35"
+    },
+    {
+      "name": "raw-minolta-dimage-5.mrw",
+      "sha256": "d60bfd80bcb1f7b9c88b14a5e46ea27885bbf92d990ab30b3939288678fea0d9",
+      "size": 6422144,
+      "camera": "Minolta DiMAGE 5",
+      "date_time_original": "2025:01:04 10:23:44"
     }
   ]
 }

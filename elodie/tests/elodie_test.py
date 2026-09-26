@@ -845,6 +845,24 @@ def test_import_raw_file(name):
     assert dest_path is not None
     assert os.path.join(expected_folder, 'Unknown Location') in dest_path, dest_path
 
+@pytest.mark.parametrize('file_name', ['photo.tif', 'photo.tiff', 'photo.heif', 'photo.hif', 'photo.avif'])
+def test_import_file_tiff_heif_avif(file_name):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+
+    helper.reset_dbs()
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+    helper.restore_dbs()
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert dest_path is not None
+    assert os.path.join('2020-06-Jun', 'Unknown Location', '2020-06-15_10-30-00-photo') in dest_path, dest_path
+
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()
     folder_destination = '{}/destination'.format(folder)

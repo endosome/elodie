@@ -403,6 +403,7 @@ def _dry_run_destination(output, operation, source):
     ('plain.jpg', ['--title', 'Test Title']),
     ('valid.txt', ['--album', 'Test Album']),
     ('valid.txt', ['--time', '2019-07-04 12:00:00']),
+    ('valid.txt', ['--title', 'Test Title']),
 ])
 def test_update_dry_run_does_not_modify_files(file_name, options):
     temporary_folder, folder = helper.create_working_folder()
@@ -629,6 +630,48 @@ def test_update_keeps_existing_backup(file_name):
     assert result.exit_code == 0, result.output
     assert backup_checksum_after == backup_checksum
     assert backup_files == [os.path.basename(dest_path) + '_original'], backup_files
+
+@mock.patch('elodie.constants.dry_run', False)
+@pytest.mark.parametrize('file_name,media_class', [
+    ('plain.jpg', Photo),
+    ('valid.txt', Text),
+])
+def test_update_title_twice(file_name, media_class):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+
+    runner = CliRunner()
+    result1 = runner.invoke(elodie._update, ['--title', 'First Title', dest_path])
+    files_after_first = [
+        os.path.join(dirname, filename)
+        for dirname, dirnames, filenames in os.walk(folder_destination)
+        for filename in filenames
+    ]
+    result2 = runner.invoke(elodie._update, ['--title', 'Second Title', files_after_first[0]])
+    files_after_second = [
+        os.path.join(dirname, filename)
+        for dirname, dirnames, filenames in os.walk(folder_destination)
+        for filename in filenames
+    ]
+    title = media_class(files_after_second[0]).get_title()
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert result1.exit_code == 0, result1.output
+    assert result2.exit_code == 0, result2.output
+    assert len(files_after_first) == 1, files_after_first
+    assert os.path.basename(files_after_first[0]).endswith('-first-title' + os.path.splitext(file_name)[1]), files_after_first
+    assert len(files_after_second) == 1, files_after_second
+    # The second title replaces the first one in the file name
+    assert os.path.basename(files_after_second[0]).endswith('-second-title' + os.path.splitext(file_name)[1]), files_after_second
+    assert 'first-title' not in files_after_second[0], files_after_second
+    assert os.path.dirname(files_after_second[0]) == os.path.dirname(dest_path), files_after_second
+    assert title == 'Second Title', title
 
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()

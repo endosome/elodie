@@ -10,6 +10,7 @@ from __future__ import absolute_import
 import os
 import re
 import time
+import warnings
 from datetime import datetime
 from re import compile
 
@@ -85,30 +86,55 @@ class Photo(Media):
 
         return _gmtime(seconds_since_epoch)
 
+    def reset_cache(self):
+        """Resets any internal cache
+        """
+        self.is_valid_cache = None
+        super(Photo, self).reset_cache()
+
     def is_valid(self):
         """Check the file extension against valid file extensions.
 
         The list of valid file extensions come from self.extensions. This
         also checks whether the file is an image.
 
+        The result is cached since this is called for each attribute of
+        the file.
+
         :returns: bool
         """
         source = self.source
 
+        extension = os.path.splitext(source)[1][1:].lower()
+        if extension not in self.extensions:
+            return False
+
         # HEIC is not well supported yet so we special case it.
         # https://github.com/python-pillow/Pillow/issues/2806
-        extension = os.path.splitext(source)[1][1:].lower()
-        if(extension != 'heic'):
-            # gh-4 This checks if the source file is an image.
-            # Use Pillow to validate the image format.
-            if(self.pillow is None):
-                return False
+        if extension == 'heic':
+            return True
 
-            try:
-                im = self.pillow.open(source)
-                if(im.format is None):
-                    return False
-            except IOError:
-                return False
-        
-        return extension in self.extensions
+        if (self.is_valid_cache is not None and
+                self.is_valid_cache[0] == source):
+            return self.is_valid_cache[1]
+
+        # gh-4 This checks if the source file is an image.
+        # Use Pillow to validate the image format.
+        if(self.pillow is None):
+            return False
+
+        try:
+            # Pillow refuses to open very large images to protect against
+            #  decompression bombs. We only read the header so they are fine.
+            with warnings.catch_warnings():
+                warnings.simplefilter(
+                    'ignore', self.pillow.DecompressionBombWarning)
+                with self.pillow.open(source) as im:
+                    valid = im.format is not None
+        except self.pillow.DecompressionBombError:
+            valid = True
+        except IOError:
+            valid = False
+
+        self.is_valid_cache = (source, valid)
+        return valid

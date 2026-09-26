@@ -1995,3 +1995,215 @@ def test_get_folder_path_with_partial_placeholder_name(mock_get_config_file):
 
     assert path == 'Unknown', path
 
+# gh-341: sidecar files (i.e. edits in .xmp or .aae files) are imported with
+#  the file they belong to.
+def _create_files(folder, files):
+    """Create files in folder, contents are either a fixture name or text."""
+    paths = {}
+    for name, contents in files.items():
+        path = os.path.join(folder, name)
+        if contents.startswith('fixture:'):
+            shutil.copyfile(helper.get_file(contents[len('fixture:'):]), path)
+        else:
+            with open(path, 'w') as f:
+                f.write(contents)
+        paths[name] = path
+    return paths
+
+def _files_in(folder):
+    return sorted(
+        os.path.relpath(os.path.join(dirname, name), folder)
+        for dirname, dirnames, names in os.walk(folder)
+        for name in names
+    )
+
+def test_find_sidecars():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    paths = _create_files(folder, {
+        'IMG_1.CR3': 'raw', 'IMG_1.xmp': 'a', 'IMG_1.CR3.XMP': 'b', 'img_1.aae': 'c',
+        'IMG_10.xmp': 'other photo', 'IMG_1.txt': 'not a sidecar', 'IMG_1.dop': 'not configured',
+    })
+
+    sidecars = filesystem.find_sidecars(paths['IMG_1.CR3'])
+
+    shutil.rmtree(temporary_folder)
+
+    assert sidecars == [
+        (paths['IMG_1.CR3.XMP'], True),
+        (paths['IMG_1.xmp'], False),
+        (paths['img_1.aae'], False),
+    ], sidecars
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-sidecar-extensions' % gettempdir())
+def test_find_sidecars_with_configured_extensions(mock_get_config_file):
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    paths = _create_files(folder, {'IMG_1.CR3': 'raw', 'IMG_1.xmp': 'a', 'IMG_1.dop': 'b'})
+
+    results = []
+    for extensions in ('dop, .XMP', ''):
+        with open(mock_get_config_file.return_value, 'w') as f:
+            f.write('[Sidecars]\nextensions=%s\n' % extensions)
+        if hasattr(load_config, 'config'):
+            del load_config.config
+        results.append(filesystem.find_sidecars(paths['IMG_1.CR3']))
+    if hasattr(load_config, 'config'):
+        del load_config.config
+
+    shutil.rmtree(temporary_folder)
+
+    assert results[0] == [(paths['IMG_1.dop'], False), (paths['IMG_1.xmp'], False)], results[0]
+    # An empty list disables importing sidecars
+    assert results[1] == [], results[1]
+
+@pytest.mark.parametrize('file_name,sidecar,full_name_style,expected', [
+    ('2015-12-05_00-59-26-img_1.jpg', 'IMG_1.XMP', False, '2015-12-05_00-59-26-img_1.xmp'),
+    ('2015-12-05_00-59-26-img_1.jpg', 'IMG_1.JPG.xmp', True, '2015-12-05_00-59-26-img_1.jpg.xmp'),
+    ('2015-12-05_00-59-26-IMG_1.JPG', 'IMG_1.aae', False, '2015-12-05_00-59-26-IMG_1.AAE'),
+])
+def test_get_sidecar_name(file_name, sidecar, full_name_style, expected):
+    name = FileSystem().get_sidecar_name(file_name, sidecar, full_name_style)
+    assert name == expected, name
+
+def test_process_file_copies_sidecars():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+    paths = _create_files(folder, {
+        'IMG_1.jpg': 'fixture:plain.jpg', 'IMG_1.xmp': 'edits', 'IMG_1.jpg.xmp': 'darktable',
+        'IMG_1.AAE': 'apple', 'orphan.xmp': 'no photo',
+    })
+    os.utime(paths['IMG_1.xmp'], (1500000000, 1500000000))
+
+    dest_path = filesystem.process_file(paths['IMG_1.jpg'], library, Photo(paths['IMG_1.jpg']))
+    dest_xmp = os.path.splitext(dest_path)[0] + '.xmp'
+    xmp_contents = open(dest_xmp).read()
+    xmp_mtime = os.stat(dest_xmp).st_mtime
+    library_files = _files_in(library)
+    source_files = sorted(os.listdir(folder))
+    imported_sidecars = filesystem.imported_sidecars
+
+    shutil.rmtree(temporary_folder)
+
+    prefix = os.path.join('2015-12-Dec', 'Unknown Location', '2015-12-05_00-59-26-img_1')
+    assert library_files == [prefix + '.aae', prefix + '.jpg', prefix + '.jpg.xmp', prefix + '.xmp'], library_files
+    assert xmp_contents == 'edits', xmp_contents
+    assert xmp_mtime == 1500000000, xmp_mtime
+    # The source is not modified when copying
+    assert source_files == ['IMG_1.AAE', 'IMG_1.jpg', 'IMG_1.jpg.xmp', 'IMG_1.xmp', 'orphan.xmp'], source_files
+    assert sorted(imported_sidecars) == sorted([paths['IMG_1.AAE'], paths['IMG_1.jpg.xmp'], paths['IMG_1.xmp']])
+
+def test_process_file_moves_sidecars():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+    paths = _create_files(folder, {'IMG_1.jpg': 'fixture:plain.jpg', 'IMG_1.xmp': 'edits'})
+
+    filesystem.process_file(paths['IMG_1.jpg'], library, Photo(paths['IMG_1.jpg']), move=True, allowDuplicate=True)
+    library_files = _files_in(library)
+    source_files = os.listdir(folder)
+
+    shutil.rmtree(temporary_folder)
+
+    prefix = os.path.join('2015-12-Dec', 'Unknown Location', '2015-12-05_00-59-26-img_1')
+    assert library_files == [prefix + '.jpg', prefix + '.xmp'], library_files
+    assert source_files == [], source_files
+
+def test_process_file_moves_shared_sidecar_with_last_file():
+    # IMG_1.jpg and IMG_1.png both use IMG_1.xmp
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+    paths = _create_files(folder, {'IMG_1.jpg': 'fixture:plain.jpg', 'IMG_1.png': 'fixture:photo.png', 'IMG_1.xmp': 'edits'})
+
+    filesystem.process_file(paths['IMG_1.jpg'], library, Photo(paths['IMG_1.jpg']), move=True, allowDuplicate=True)
+    source_after_first = sorted(os.listdir(folder))
+    filesystem.process_file(paths['IMG_1.png'], library, Photo(paths['IMG_1.png']), move=True, allowDuplicate=True)
+    source_after_second = sorted(os.listdir(folder))
+    library_xmps = [f for f in _files_in(library) if f.endswith('.xmp')]
+
+    shutil.rmtree(temporary_folder)
+
+    assert source_after_first == ['IMG_1.png', 'IMG_1.xmp'], source_after_first
+    assert source_after_second == [], source_after_second
+    assert len(library_xmps) == 2, library_xmps
+
+def test_process_file_does_not_replace_different_sidecar():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+    paths = _create_files(folder, {'IMG_1.jpg': 'fixture:plain.jpg', 'IMG_1.xmp': 'new edits'})
+    existing = os.path.join(library, '2015-12-Dec', 'Unknown Location', '2015-12-05_00-59-26-img_1.xmp')
+    os.makedirs(os.path.dirname(existing))
+    with open(existing, 'w') as f:
+        f.write('other edits')
+
+    with mock.patch('builtins.print') as mock_print:
+        filesystem.process_file(paths['IMG_1.jpg'], library, Photo(paths['IMG_1.jpg']))
+    existing_contents = open(existing).read()
+    imported_sidecars = filesystem.imported_sidecars
+
+    shutil.rmtree(temporary_folder)
+
+    assert existing_contents == 'other edits', existing_contents
+    assert imported_sidecars == [], imported_sidecars
+    assert any('a different file exists' in str(c) for c in mock_print.call_args_list), mock_print.call_args_list
+
+def test_process_file_duplicate_does_not_import_sidecar():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+    paths = _create_files(folder, {'IMG_1.jpg': 'fixture:plain.jpg'})
+    filesystem.process_file(paths['IMG_1.jpg'], library, Photo(paths['IMG_1.jpg']))
+    library_before = _files_in(library)
+
+    # Edits made after the first import
+    _create_files(folder, {'IMG_1.xmp': 'newer edits'})
+    with mock.patch('builtins.print') as mock_print:
+        result = filesystem.process_file(paths['IMG_1.jpg'], library, Photo(paths['IMG_1.jpg']))
+    library_after = _files_in(library)
+
+    shutil.rmtree(temporary_folder)
+
+    assert result is None
+    assert library_after == library_before, library_after
+    assert any('was not imported since' in str(c) for c in mock_print.call_args_list), mock_print.call_args_list
+
+@mock.patch('elodie.constants.dry_run', True)
+def test_process_file_dry_run_does_not_copy_sidecars():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+    paths = _create_files(folder, {'IMG_1.jpg': 'fixture:plain.jpg', 'IMG_1.xmp': 'edits'})
+
+    with mock.patch('builtins.print') as mock_print:
+        filesystem.process_file(paths['IMG_1.jpg'], library, Photo(paths['IMG_1.jpg']))
+    library_exists = os.path.exists(library)
+
+    shutil.rmtree(temporary_folder)
+
+    assert not library_exists
+    assert any('Would copy' in str(c) and 'IMG_1.xmp' in str(c) for c in mock_print.call_args_list), mock_print.call_args_list
+
+def test_list_directory_is_cached_until_the_directory_changes():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    _create_files(folder, {'a.jpg': 'a'})
+
+    with mock.patch('elodie.filesystem.os.listdir', wraps=os.listdir) as listdir:
+        first = filesystem.list_directory(folder)
+        second = filesystem.list_directory(folder)
+        calls_before_change = listdir.call_count
+        # Make sure the modification time of the directory changes
+        time.sleep(0.01)
+        _create_files(folder, {'b.jpg': 'b'})
+        os.utime(folder, None)
+        third = filesystem.list_directory(folder)
+
+    shutil.rmtree(temporary_folder)
+
+    assert calls_before_change == 1, calls_before_change
+    assert sorted(first) == sorted(second) == ['a.jpg']
+    assert sorted(third) == ['a.jpg', 'b.jpg'], third
+

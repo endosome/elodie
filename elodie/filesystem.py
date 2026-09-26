@@ -5,6 +5,7 @@ General file system methods.
 """
 
 import calendar
+import filecmp
 import os
 import re
 import shutil
@@ -43,6 +44,13 @@ class FileSystem(object):
         # Set by process_file() if the file was not imported because it was
         #  imported before, so it can be told apart from errors. gh-507
         self.skipped_as_duplicate = False
+        # Sidecar files (i.e. edits in .xmp or .aae files) are imported with
+        #  the file they belong to. gh-341
+        self.default_sidecar_extensions = ('aae', 'xmp')
+        # Set by process_file() to the sidecar files it imported
+        self.imported_sidecars = []
+        # Folder listings to find sidecar files, see list_directory()
+        self.directory_listings = {}
         # Python3 treats the regex \s differently than Python2.
         # It captures some additional characters like the unicode checkmark \u2713.
         # See build failures in Python3 here.
@@ -646,6 +654,7 @@ class FileSystem(object):
 
     def process_file(self, _file, destination, media, **kwargs):
         self.skipped_as_duplicate = False
+        self.imported_sidecars = []
         move = False
         if('move' in kwargs):
             move = kwargs['move']
@@ -664,6 +673,11 @@ class FileSystem(object):
         if(checksum is None):
             log.info('Original checksum returned None for %s. Skipping...' %
                      _file)
+            if self.skipped_as_duplicate:
+                # The sidecar may contain newer edits so we do not replace
+                #  the one in the library but let the user know.
+                for sidecar, full_name_style in self.find_sidecars(_file):
+                    print('Sidecar %s was not imported since %s was imported before' % (sidecar, _file))  # noqa
             return
 
         # Run `before()` for every loaded plugin and if any of them raise an exception
@@ -700,6 +714,9 @@ class FileSystem(object):
                 os.utime(dest_path, (stat.st_atime, stat.st_mtime))
             else:
                 print(f"[DRY-RUN] Would set utime for: {dest_path}")
+
+            self.imported_sidecars = self.process_sidecars(
+                _file, dest_path, move=True)
         else:
             # Copy the source as is so it is not modified in any way,
             #  not even its ctime. gh-533
@@ -712,6 +729,9 @@ class FileSystem(object):
                 self.set_utime_from_metadata(metadata, dest_path)
             else:
                 print(f"[DRY-RUN] Would set utime from metadata for: {dest_path}")
+
+            self.imported_sidecars = self.process_sidecars(
+                _file, dest_path, move=False)
 
         db = Db()
         db.add_hash(checksum, dest_path)
@@ -726,6 +746,154 @@ class FileSystem(object):
 
 
         return dest_path
+
+    def get_sidecar_extensions(self):
+        """Get the extensions of sidecar files which are imported with the
+        file they belong to. Set in the [Sidecars] section of config.ini,
+        an empty list disables it.
+
+        :returns: set of lowercase extensions without a dot
+        """
+        config = load_config()
+        if 'Sidecars' in config and 'extensions' in config['Sidecars']:
+            return {
+                extension.strip().lstrip('.').lower()
+                for extension in config['Sidecars']['extensions'].split(',')
+                if extension.strip()
+            }
+        return set(self.default_sidecar_extensions)
+
+    def list_directory(self, directory):
+        """List the files of a directory. The listing is cached until the
+        directory changes since it is needed for each file in it.
+
+        :param str directory: Path of the directory.
+        :returns: list of file names
+        """
+        try:
+            modified = os.stat(directory).st_mtime_ns
+        except OSError:
+            return []
+        cached = self.directory_listings.get(directory)
+        if cached is None or cached[0] != modified:
+            cached = (modified, os.listdir(directory))
+            self.directory_listings[directory] = cached
+        return cached[1]
+
+    def find_sidecars(self, file_path):
+        """Find the sidecar files of a file in the same directory with the
+        same name, ignoring case: IMG_1234.xmp or IMG_1234.CR3.xmp for
+        IMG_1234.CR3.
+
+        :param str file_path: Path of the file.
+        :returns: list of tuples of the path of the sidecar file and whether
+            its name includes the extension of the file (IMG_1234.CR3.xmp)
+        """
+        extensions = self.get_sidecar_extensions()
+        if not extensions:
+            return []
+
+        directory, name = os.path.split(file_path)
+        stem = os.path.splitext(name)[0].lower()
+        sidecars = []
+        for entry in sorted(self.list_directory(directory)):
+            base, extension = os.path.splitext(entry)
+            if extension[1:].lower() not in extensions:
+                continue
+            path = os.path.join(directory, entry)
+            if not os.path.isfile(path):
+                continue
+            if base.lower() == stem:
+                sidecars.append((path, False))
+            elif base.lower() == name.lower():
+                sidecars.append((path, True))
+        return sidecars
+
+    def is_sidecar_shared(self, sidecar, file_path):
+        """Check if another supported file than file_path uses the sidecar,
+        i.e. IMG_1234.xmp for IMG_1234.CR3 and IMG_1234.JPG.
+
+        :param str sidecar: Path of the sidecar file.
+        :param str file_path: Path of the file it was imported with.
+        :returns: bool
+        """
+        supported_extensions = set()
+        for cls in get_all_subclasses(Base):
+            supported_extensions.update(cls.extensions)
+
+        # IMG_1234 for IMG_1234.xmp or IMG_1234.CR3 for IMG_1234.CR3.xmp
+        sidecar_base = os.path.splitext(os.path.basename(sidecar))[0].lower()
+        directory = os.path.dirname(sidecar)
+        for entry in self.list_directory(directory):
+            base, extension = os.path.splitext(entry)
+            if extension[1:].lower() not in supported_extensions:
+                continue
+            if sidecar_base not in (base.lower(), entry.lower()):
+                continue
+            path = os.path.join(directory, entry)
+            if os.path.isfile(path) and not self.is_same_file(path, file_path):
+                return True
+        return False
+
+    def get_sidecar_name(self, file_name, sidecar, full_name_style):
+        """Name of a sidecar file for a file named file_name in the library.
+        Its extension has the case of the file's extension.
+
+        :param str file_name: Name of the file in the library.
+        :param str sidecar: Path of the sidecar file.
+        :param bool full_name_style: The name includes the extension of the
+            file (IMG_1234.CR3.xmp).
+        :returns: str
+        """
+        extension = os.path.splitext(sidecar)[1][1:]
+        if os.path.splitext(file_name)[1].isupper():
+            extension = extension.upper()
+        else:
+            extension = extension.lower()
+        base = file_name if full_name_style else os.path.splitext(file_name)[0]
+        return '{}.{}'.format(base, extension)
+
+    def process_sidecars(self, _file, dest_path, move):
+        """Copy or move the sidecar files of _file next to dest_path so
+        edits (i.e. in .xmp or .aae files) stay with the file. gh-341
+
+        A sidecar which another file still uses (i.e. by IMG_1234.CR3 and
+        IMG_1234.JPG) is copied instead of moved. A different file which
+        exists at the destination is not replaced.
+
+        :param str _file: Path of the file which was imported.
+        :param str dest_path: Path of the file in the library.
+        :param bool move: Move the sidecar files instead of copying them.
+        :returns: list of paths of the sidecar files which were imported
+        """
+        imported = []
+        for sidecar, full_name_style in self.find_sidecars(_file):
+            dest_sidecar = os.path.join(
+                os.path.dirname(dest_path),
+                self.get_sidecar_name(
+                    os.path.basename(dest_path), sidecar, full_name_style)
+            )
+            if self.is_same_file(sidecar, dest_sidecar):
+                continue
+
+            keep_source = move and self.is_sidecar_shared(sidecar, _file)
+            if os.path.exists(dest_sidecar):
+                if not filecmp.cmp(dest_sidecar, sidecar, shallow=False):
+                    print('Sidecar %s was not imported since a different file exists at %s' % (sidecar, dest_sidecar))  # noqa
+                    continue
+                # The same sidecar was imported with another file already
+                if move and not keep_source:
+                    self._file_operation('remove', sidecar)
+                imported.append(sidecar)
+                continue
+
+            stat = os.stat(sidecar)
+            operation = 'move' if move and not keep_source else 'copy'
+            self._file_operation(operation, sidecar, dest_sidecar)
+            if not constants.dry_run:
+                os.utime(dest_sidecar, (stat.st_atime, stat.st_mtime))
+            imported.append(sidecar)
+        return imported
 
     def write_metadata_to_copy(self, media, source, dest_path):
         """Write changes to the metadata of the source file which were

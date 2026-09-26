@@ -37,6 +37,7 @@ FILESYSTEM = FileSystem()
 
 def import_file(_file, destination, album_from_folder, trash, allow_duplicates, location=None, time=None):
     FILESYSTEM.skipped_as_duplicate = False
+    FILESYSTEM.imported_sidecars = []
 
     _file = _decode(_file)
     destination = _decode(destination)
@@ -87,6 +88,18 @@ def import_file(_file, destination, album_from_folder, trash, allow_duplicates, 
             print(f"[DRY-RUN] Would move to trash: {_file}")
         else:
             send2trash(_file)
+
+        # Sidecars which were imported with the file follow it to the trash
+        #  unless another file still uses them (i.e. IMG_1234.JPG and
+        #  IMG_1234.CR3 use IMG_1234.xmp). gh-341
+        for sidecar in FILESYSTEM.imported_sidecars:
+            if (not os.path.exists(sidecar) or
+                    FILESYSTEM.is_sidecar_shared(sidecar, _file)):
+                continue
+            if constants.dry_run:
+                print(f"[DRY-RUN] Would move to trash: {sidecar}")
+            else:
+                send2trash(sidecar)
 
     return dest_path or None
 

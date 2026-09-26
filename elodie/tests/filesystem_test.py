@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 # Project imports
+import calendar
 import unittest.mock as mock
 import os
 import re
@@ -1096,7 +1097,7 @@ def test_set_utime_with_exif_date():
     initial_time = int(min(initial_stat.st_mtime, initial_stat.st_ctime))
     initial_checksum = helper.checksum(origin)
 
-    assert initial_time != time.mktime(metadata_initial['date_taken'])
+    assert initial_time != calendar.timegm(metadata_initial['date_taken'])
 
     filesystem.set_utime_from_metadata(media_initial.get_metadata(), media_initial.get_file_path())
     final_stat = os.stat(origin)
@@ -1108,8 +1109,73 @@ def test_set_utime_with_exif_date():
     shutil.rmtree(folder)
 
     assert initial_stat.st_mtime != final_stat.st_mtime
-    assert final_stat.st_mtime == time.mktime(metadata_final['date_taken'])
+    assert final_stat.st_mtime == calendar.timegm(metadata_final['date_taken'])
     assert initial_checksum == final_checksum
+
+@pytest.fixture
+def non_utc_timezone(monkeypatch):
+    if not hasattr(time, 'tzset'):
+        pytest.skip('time.tzset is not available on this platform')
+    # POSIX TZ strings have inverted signs, this is UTC+05:00 without DST
+    monkeypatch.setenv('TZ', 'TEST-05')
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+def test_set_utime_with_exif_date_in_non_utc_timezone(non_utc_timezone):
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = os.path.join(folder,'photo.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    media = Photo(origin)
+    filesystem.set_utime_from_metadata(media.get_metadata(), media.get_file_path())
+    final_stat = os.stat(origin)
+
+    shutil.rmtree(folder)
+
+    # EXIF DateTimeOriginal of plain.jpg is 2015:12:05 00:59:26 local time
+    assert time.localtime(final_stat.st_mtime)[:6] == (2015, 12, 5, 0, 59, 26), time.localtime(final_stat.st_mtime)
+
+def test_process_file_utime_after_reimport_in_non_utc_timezone(non_utc_timezone):
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = os.path.join(folder,'photo.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    # The file name of the first import has the date prefix which is
+    #  used to set the utime when it is imported again
+    first = filesystem.process_file(origin, folder, Photo(origin), allowDuplicate=True)
+    second = filesystem.process_file(first, os.path.join(folder, 'reimport'), Photo(first), allowDuplicate=True)
+    first_mtime = os.stat(first).st_mtime
+    second_mtime = os.stat(second).st_mtime
+
+    shutil.rmtree(folder)
+
+    # EXIF DateTimeOriginal of plain.jpg is 2015:12:05 00:59:26 local time
+    assert time.localtime(first_mtime)[:6] == (2015, 12, 5, 0, 59, 26), time.localtime(first_mtime)
+    assert second_mtime == first_mtime, (first_mtime, second_mtime)
+
+def test_set_utime_with_date_before_1970(monkeypatch):
+    monkeypatch.setattr(time, 'gmtime', helper.windows_gmtime)
+    monkeypatch.setattr(time, 'mktime', helper.windows_mktime)
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = os.path.join(folder,'text.txt')
+    with open(origin, 'w') as f:
+        f.write('{"date_taken":-315576000.0}\nsample text')
+
+    media = Text(origin)
+    filesystem.set_utime_from_metadata(media.get_metadata(), media.get_file_path())
+    final_stat = os.stat(origin)
+
+    shutil.rmtree(folder)
+
+    assert final_stat.st_mtime == -315576000, final_stat.st_mtime
 
 def test_set_utime_without_exif_date():
     filesystem = FileSystem()
@@ -1125,7 +1191,7 @@ def test_set_utime_without_exif_date():
     initial_time = int(min(initial_stat.st_mtime, initial_stat.st_ctime))
     initial_checksum = helper.checksum(origin)
 
-    assert initial_time == time.mktime(metadata_initial['date_taken'])
+    assert initial_time == calendar.timegm(metadata_initial['date_taken'])
 
     filesystem.set_utime_from_metadata(media_initial.get_metadata(), media_initial.get_file_path())
     final_stat = os.stat(origin)
@@ -1137,7 +1203,7 @@ def test_set_utime_without_exif_date():
     shutil.rmtree(folder)
 
     assert initial_time == final_stat.st_mtime
-    assert final_stat.st_mtime == time.mktime(metadata_final['date_taken']), (final_stat.st_mtime, time.mktime(metadata_final['date_taken']))
+    assert final_stat.st_mtime == calendar.timegm(metadata_final['date_taken']), (final_stat.st_mtime, calendar.timegm(metadata_final['date_taken']))
     assert initial_checksum == final_checksum
 
 def test_should_exclude_with_no_exclude_arg():

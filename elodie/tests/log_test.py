@@ -1,4 +1,3 @@
-from __future__ import absolute_import
 # Project imports
 
 import os
@@ -7,10 +6,7 @@ import unittest
 
 from json import dumps
 from unittest.mock import patch
-try:
-    from StringIO import StringIO
-except ImportError:
-    from io import StringIO
+from io import StringIO
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))))
 

@@ -1,4 +1,3 @@
-from __future__ import absolute_import
 # Project imports
 
 import os
@@ -92,6 +91,3 @@ def test_mapquest_key_override(environ):
 
 def test_accepted_language():
     assert constants.accepted_language == 'en', constants.accepted_language
-
-def test_python_version():
-    assert constants.python_version == sys.version_info.major, constants.python_version

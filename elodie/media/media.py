@@ -8,10 +8,8 @@ are used to represent the actual files.
 
 .. moduleauthor:: Jaisen Mathai <jaisen@jmathai.com>
 """
-from __future__ import print_function
 
 import os
-import six
 from time import mktime
 
 # load modules
@@ -93,7 +91,7 @@ class Media(Base):
         for key in self.latitude_keys + self.longitude_keys:
             if key not in exif:
                 continue
-            if isinstance(exif[key], six.string_types) and len(exif[key]) == 0:
+            if isinstance(exif[key], str) and len(exif[key]) == 0:
                 # If exiftool GPS output is empty, the data returned will be a str
                 # with 0 length.
                 # https://github.com/jmathai/elodie/issues/354

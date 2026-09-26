@@ -1,8 +1,6 @@
 """
 Methods for interacting with information Elodie caches about stored media.
 """
-from builtins import map
-from builtins import object
 
 import hashlib
 import json

@@ -9,6 +9,10 @@
 
 Getting started takes just a few minutes.
 
+### Check your Python version
+
+Elodie requires Python 3.10 or higher. Check your version by typing `python3 --version`.
+
 ### Install ExifTool
 
 Elodie relies on the great [ExifTool library by Phil Harvey](http://www.sno.phy.queensu.ca/~phil/exiftool/). You'll need to install it for your platform.
@@ -302,7 +306,7 @@ You can construct your folder structure using a combination of the location, dat
 
 The placeholders can be used to define the folder structure you'd like to create. The default structure would look like `2015-07-Jul/Mountain View`.
 
-I have some date placeholders you can customize. You can use any of [the standard Python time directives](https://docs.python.org/2/library/datetime.html#strftime-and-strptime-behavior) to customize the date format to your liking.
+I have some date placeholders you can customize. You can use any of [the standard Python time directives](https://docs.python.org/3/library/datetime.html#strftime-and-strptime-behavior) to customize the date format to your liking.
 
 * `%day` the day the photo was taken.
 * `%month` the month the photo was taken.
@@ -322,7 +326,7 @@ I also have a few built-in location placeholders you can use. Use this to constr
 In addition to my built-in and date placeholders you can combine them into a single folder name using my complex placeholders.
 
 * `%location` can be used to combine multiple values of `%city`, `%state` and `%country`. For example, `location=%city, %state` would result in folder names like `Sunnyvale, California`.
-* `%date` can be used to combine multiple values from [the standard Python time directives](https://docs.python.org/2/library/datetime.html#strftime-and-strptime-behavior). For example, `date=%Y-%m` would result in folder names like `2015-12`.
+* `%date` can be used to combine multiple values from [the standard Python time directives](https://docs.python.org/3/library/datetime.html#strftime-and-strptime-behavior). For example, `date=%Y-%m` would result in folder names like `2015-12`.
 * `%custom` can be used to combine multiple values from anything else. Think of it as a catch-all when `%location` and `%date` don't meet your needs.
 
 You can also combine placeholders and other text directly in `full_path`. For example, `full_path=%year-%month/%location` or `full_path=%year/%month, %location`. Each placeholder uses the value you assigned to it, like `month=%m`.

@@ -32,8 +32,10 @@ def checksum(file_path, blocksize=65536):
     return None
 
 def create_working_folder(format=None):
-    temporary_folder = tempfile.gettempdir()
-    folder = os.path.join(temporary_folder, random_string(10, format), random_string(10, format))
+    # Each test gets its own temporary_folder since many import into it and
+    #  remove what they created. This allows running tests in parallel.
+    temporary_folder = os.path.join(tempfile.gettempdir(), random_string(10, format))
+    folder = os.path.join(temporary_folder, random_string(10, format))
     os.makedirs(folder)
 
     return (temporary_folder, folder)

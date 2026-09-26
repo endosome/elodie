@@ -563,7 +563,7 @@ full_path=%year/%month/%album|%"No Album Fool"/%month
 
     assert path == os.path.join('2015','12','No Album Fool','12'), path
 
-@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-location-date' % gettempdir())
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-get-folder-path-with-with-more-than-two-levels' % gettempdir())
 def test_get_folder_path_with_with_more_than_two_levels(mock_get_config_file):
     with open(mock_get_config_file.return_value, 'w') as f:
         f.write("""
@@ -588,7 +588,7 @@ full_path=%year/%month/%location
         
     assert path == os.path.join('2015','12','Sunnyvale, CA'), path
 
-@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-location-date' % gettempdir())
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-get-folder-path-with-with-only-one-level' % gettempdir())
 def test_get_folder_path_with_with_only_one_level(mock_get_config_file):
     with open(mock_get_config_file.return_value, 'w') as f:
         f.write("""
@@ -1279,7 +1279,7 @@ full_path=%date/%location
 
     assert path_definition == expected, path_definition
 
-@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-location-date' % gettempdir())
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-get-folder-path-definition-location-date' % gettempdir())
 def test_get_folder_path_definition_location_date(mock_get_config_file):
     with open(mock_get_config_file.return_value, 'w') as f:
         f.write("""
@@ -1338,7 +1338,7 @@ full_path=%date/%location
     if hasattr(load_config, 'config'):
         del load_config.config
 
-@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-location-date' % gettempdir())
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-get-folder-path-definition-with-more-than-two-levels' % gettempdir())
 def test_get_folder_path_definition_with_more_than_two_levels(mock_get_config_file):
     with open(mock_get_config_file.return_value, 'w') as f:
         f.write("""
@@ -1361,7 +1361,7 @@ full_path=%year/%month/%day
 
     assert path_definition == expected, path_definition
 
-@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-location-date' % gettempdir())
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-get-folder-path-definition-with-only-one-level' % gettempdir())
 def test_get_folder_path_definition_with_only_one_level(mock_get_config_file):
     with open(mock_get_config_file.return_value, 'w') as f:
         f.write("""
@@ -1590,9 +1590,7 @@ def test_process_file_dry_run_real():
     assert not os.path.exists(destination), "Destination file should not exist in dry-run mode"
     
     # Clean up
-    shutil.rmtree(folder)
-    if destination:
-        shutil.rmtree(os.path.dirname(os.path.dirname(destination)))
+    shutil.rmtree(temporary_folder)
 
 # gh-533: importing must not modify the source file in any way.
 SOURCE_FILES = [

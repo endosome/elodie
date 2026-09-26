@@ -1,7 +1,7 @@
 # Hello, I'm Elodie
 ~~ *Your Personal EXIF-based Photo, Video and Audio Assistant* ~~
 
-[![CircleCI](https://dl.circleci.com/status-badge/img/gh/jmathai/elodie/tree/master.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/jmathai/elodie/tree/master) [![Coverage Status](https://coveralls.io/repos/github/jmathai/elodie/badge.svg?branch=master)](https://coveralls.io/github/jmathai/elodie?branch=master) [![Scrutinizer Code Quality](https://scrutinizer-ci.com/g/jmathai/elodie/badges/quality-score.png?b=master)](https://scrutinizer-ci.com/g/jmathai/elodie/?branch=master)
+[![CI](https://github.com/endosome/elodie/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/endosome/elodie/actions/workflows/ci.yml) [![Coverage Status](https://coveralls.io/repos/github/endosome/elodie/badge.svg?branch=main)](https://coveralls.io/github/endosome/elodie?branch=main) [![Scrutinizer Code Quality](https://scrutinizer-ci.com/g/jmathai/elodie/badges/quality-score.png?b=master)](https://scrutinizer-ci.com/g/jmathai/elodie/?branch=master)
 
 <p align="center"><img src ="https://jmathai.s3.amazonaws.com/github/elodie/elodie-folder-anim.gif" /></p>
 

@@ -27,7 +27,7 @@ def environ(monkeypatch):
     reload(constants)
 
 def test_debug():
-    # This seems pointless but on Travis we explicitly modify the file to be True
+    # This seems pointless but in CI we explicitly modify the file to be True
     assert constants.debug == constants.debug, constants.debug
 
 def test_application_directory_default(environ):

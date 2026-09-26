@@ -8,6 +8,9 @@ import shutil
 import tempfile
 import time
 import datetime
+import unittest.mock as mock
+
+import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))))
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
@@ -24,6 +27,10 @@ def test_audio_extensions():
     extensions = audio.extensions
 
     assert 'm4a' in extensions
+    assert 'mp3' in extensions
+    assert 'flac' in extensions
+    assert 'ogg' in extensions
+    assert 'opus' in extensions
 
     valid_extensions = Audio.get_valid_extensions()
 
@@ -194,3 +201,30 @@ def test_set_title_non_ascii():
     shutil.rmtree(folder)
 
     assert metadata['title'] == unicode_title, metadata['title']
+
+# gh-457: mp3 stores the date as ID3:RecordingTime, flac, ogg and opus as
+#  Vorbis:Date. Both only contain the date (2019-07-04).
+@pytest.mark.parametrize('file_name', ['audio.mp3', 'audio.flac', 'audio.ogg', 'audio.opus'])
+def test_get_date_taken_from_date_only(file_name):
+    audio = Audio(helper.get_file(file_name))
+    date_taken = audio.get_date_taken()
+
+    assert audio.is_valid()
+    assert date_taken == helper.time_convert((2019, 7, 4, 0, 0, 0, 3, 185, 0)), date_taken
+
+@pytest.mark.parametrize('value', [2019, '2019', 'not a date'])
+def test_get_date_taken_falls_back_to_modification_time(value):
+    # A year alone (a number in the JSON from exiftool) is not precise enough
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'audio.ogg')
+    shutil.copyfile(helper.get_file('audio.ogg'), origin)
+    os.utime(origin, (1584273600, 1584273600))
+
+    audio = Audio(origin)
+    with mock.patch.object(audio, 'get_exiftool_attributes', return_value={'Vorbis:Date': value}):
+        date_taken = audio.get_date_taken()
+
+    shutil.rmtree(folder)
+
+    assert date_taken == time.gmtime(1584273600), date_taken
+

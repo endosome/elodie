@@ -31,7 +31,8 @@ class Photo(Media):
     __name__ = 'Photo'
 
     #: Valid extensions for photo files.
-    extensions = ('arw', 'cr2', 'dng', 'gif', 'heic', 'jpeg', 'jpg', 'nef', 'png', 'rw2')
+    extensions = ('arw', 'cr2', 'dng', 'gif', 'heic', 'jpeg', 'jpg', 'nef',
+                  'png', 'rw2', 'webp')
 
     def __init__(self, source=None):
         super(Photo, self).__init__(source)

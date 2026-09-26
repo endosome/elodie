@@ -29,7 +29,8 @@ class Video(Media):
     __name__ = 'Video'
 
     #: Valid extensions for video files.
-    extensions = ('avi', 'm4v', 'mov', 'mp4', 'mpg', 'mpeg', '3gp', 'mts')
+    extensions = ('avi', 'm4v', 'mov', 'mp4', 'mpg', 'mpeg', '3gp', 'mts',
+                  'mkv', 'webm')
 
     def __init__(self, source=None):
         super(Video, self).__init__(source)
@@ -38,7 +39,9 @@ class Video(Media):
             'QuickTime:CreateDate',
             'QuickTime:CreationDate-und-US',
             'QuickTime:MediaCreateDate',
-            'H264:DateTimeOriginal'
+            'H264:DateTimeOriginal',
+            # mkv and webm
+            'Matroska:DateTimeOriginal'
         ]
         self.title_key = 'XMP:DisplayName'
         self.latitude_keys = [
@@ -74,7 +77,8 @@ class Video(Media):
                 # Example date strings we want to parse
                 # 2015:01:19 12:45:11-08:00
                 # 2013:09:30 07:06:05
-                date = re.search('([0-9: ]+)([-+][0-9:]+)?', exif[date_key])
+                date_string = self.normalize_date_string(str(exif[date_key]))
+                date = re.search('([0-9: ]+)([-+][0-9:]+)?', date_string)
                 if(date is not None):
                     date_string = date.group(1)
                     date_offset = date.group(2)
@@ -102,3 +106,26 @@ class Video(Media):
             return None
 
         return _gmtime(seconds_since_epoch)
+
+    def normalize_date_string(self, value):
+        """Convert dates like 2019-07-04, 2019:07:04 or 2019-07-04T12:00:00,
+        which audio files use, to 2019:07:04 00:00:00. Other values (i.e.
+        only a year) are returned unchanged.
+
+        :param str value: Date from the metadata.
+        :returns: str
+        """
+        match = re.match(
+            r'^(\d{4})[-:](\d{2})[-:](\d{2})'
+            r'(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?(.*)$',
+            value.strip()
+        )
+        if match is None:
+            return value
+
+        year, month, day, hour, minute, second, rest = match.groups()
+        return '{}:{}:{} {}:{}:{}{}'.format(
+            year, month, day,
+            hour or '00', minute or '00', second or '00',
+            rest
+        )

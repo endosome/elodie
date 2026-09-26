@@ -6,6 +6,7 @@ General file system methods.
 from __future__ import print_function
 from builtins import object
 
+import calendar
 import os
 import re
 import shutil
@@ -654,14 +655,18 @@ class FileSystem(object):
                 '%Y-%m-%d %H:%M:%S'
             )
 
+            # The date in the file name was generated from date_taken
+            #  which is in UTC (see get_file_name) so we use timegm here too.
             if not constants.dry_run:
-                os.utime(file_path, (time.time(), time.mktime(date_taken)))
+                os.utime(file_path, (time.time(), calendar.timegm(date_taken)))
             else:
                 print(f"[DRY-RUN] Would set utime from date pattern for: {file_path}")
         else:
-            # We don't make any assumptions about time zones and
-            # assume local time zone.
-            date_taken_in_seconds = time.mktime(date_taken)
+            # date_taken is a UTC struct_time (see get_date_taken) so we
+            #  use timegm, the inverse of gmtime, rather than mktime which
+            #  would treat it as local time.
+            # This also avoids mktime failing for dates before 1970 on Windows.
+            date_taken_in_seconds = calendar.timegm(date_taken)
             if not constants.dry_run:
                 os.utime(file_path, (time.time(), (date_taken_in_seconds)))
             else:

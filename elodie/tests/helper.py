@@ -142,6 +142,18 @@ def windows_gmtime(seconds=None):
         raise OSError(22, 'Invalid argument')
     return _original_gmtime(seconds)
 
+_original_mktime = time.mktime
+
+# windows_mktime(t)
+# Behaves like time.mktime on Windows, which raises OverflowError
+#  for dates before 1970.
+
+def windows_mktime(t):
+    seconds = _original_mktime(t)
+    if seconds < 0:
+        raise OverflowError('mktime argument out of range')
+    return seconds
+
 def time_convert(s_time):
     if is_windows():
         return time.gmtime((time.mktime(s_time)))

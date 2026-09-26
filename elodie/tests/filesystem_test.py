@@ -69,6 +69,15 @@ def test_create_directory_invalid_permissions(mock_makedirs):
 
     assert status == False
 
+@mock.patch('elodie.constants.dry_run', True)
+def test_create_directory_dry_run():
+    filesystem = FileSystem()
+    folder = os.path.join(helper.temp_dir(), helper.random_string(10), helper.random_string(10))
+    status = filesystem.create_directory(folder)
+
+    assert status == True
+    assert not os.path.exists(os.path.dirname(folder)), folder
+
 def test_delete_directory_if_empty():
     filesystem = FileSystem()
     folder = os.path.join(helper.temp_dir(), helper.random_string(10))
@@ -1777,4 +1786,21 @@ def test_process_file_skips_already_imported_source():
     assert first is not None
     assert checksums_differ
     assert second is None, second
+
+@mock.patch('elodie.constants.dry_run', True)
+def test_process_file_dry_run_does_not_create_directories():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = _create_source(folder, 'plain.jpg')
+
+    destination = filesystem.process_file(origin, folder_destination, Photo(origin), allowDuplicate=True)
+    destination_contents = os.listdir(folder_destination)
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert destination is not None
+    assert destination_contents == [], destination_contents
 

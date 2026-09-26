@@ -81,6 +81,9 @@ class FileSystem(object):
         try:
             if os.path.exists(directory_path):
                 return True
+            elif constants.dry_run:
+                print(f"[DRY-RUN] Would create directory: {directory_path}")
+                return True  # Simulate success
             else:
                 os.makedirs(directory_path)
                 return True

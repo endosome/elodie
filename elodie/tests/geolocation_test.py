@@ -186,7 +186,7 @@ def test_lookup_debug_mapquest_url():
     output = out.getvalue()
     assert 'MapQuest url:' in output, output
 
-@mock.patch('elodie.constants.location_db', return_value='%s/location.json-cached' % gettempdir())
+@mock.patch('elodie.constants.location_db', return_value='%s/location.json-place-name-deprecated-string-cached' % gettempdir())
 def test_place_name_deprecated_string_cached(mock_location_db):
     # See gh-160 for backwards compatability needed when a string is stored instead of a dict
     helper.reset_dbs()
@@ -200,7 +200,7 @@ def test_place_name_deprecated_string_cached(mock_location_db):
 
     assert place_name['city'] == 'Sunnyvale', place_name
 
-@mock.patch('elodie.constants.location_db', return_value='%s/location.json-cached' % gettempdir())
+@mock.patch('elodie.constants.location_db', return_value='%s/location.json-place-name-cached' % gettempdir())
 def test_place_name_cached(mock_location_db):
     helper.reset_dbs()
     with open(mock_location_db.return_value, 'w') as f:

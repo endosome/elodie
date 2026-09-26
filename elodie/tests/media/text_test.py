@@ -344,3 +344,57 @@ def test_parse_metadata_line_with_non_utf8_encoding():
     metadata = text.get_metadata()
     assert metadata is not None
     assert metadata['mime_type'] == 'text/plain'
+
+def _write_and_set_album(folder, contents):
+    origin = '%s/text.txt' % folder
+    with open(origin, 'wb') as f:
+        f.write(contents)
+
+    text = Text(origin)
+    status = text.set_album('Test Album')
+
+    with open(origin, 'rb') as f:
+        first_line, body = f.read().split(b'\n', 1)
+
+    return (status, Text(origin).get_album(), body)
+
+def test_set_album_with_utf8_content_on_windows(monkeypatch):
+    monkeypatch.setattr('elodie.media.text.open', helper.windows_open, raising=False)
+    temporary_folder, folder = helper.create_working_folder()
+
+    # \u0141 is encoded as C5 81 in UTF-8 and 0x81 is undefined in cp1252
+    body = u'\u0141\xf3d\u017a\n'.encode('utf-8')
+    status, album, body_updated = _write_and_set_album(folder, body)
+
+    shutil.rmtree(folder)
+
+    assert status == True, status
+    assert album == 'Test Album', album
+    assert body_updated == body, body_updated
+
+def test_set_album_keeps_non_utf8_content():
+    temporary_folder, folder = helper.create_working_folder()
+
+    with open(helper.get_file('cp1252.txt'), 'rb') as f:
+        first_line, body = f.read().split(b'\n', 1)
+
+    status, album, body_updated = _write_and_set_album(folder, first_line + b'\n' + body)
+
+    shutil.rmtree(folder)
+
+    assert b'\x92' in body
+    assert status == True, status
+    assert album == 'Test Album', album
+    assert body_updated == body, body_updated
+
+def test_set_album_keeps_crlf_line_endings():
+    temporary_folder, folder = helper.create_working_folder()
+
+    body = b'line one\r\nline two\r\n'
+    status, album, body_updated = _write_and_set_album(folder, b'{"title":"crlf"}\r\n' + body)
+
+    shutil.rmtree(folder)
+
+    assert status == True, status
+    assert album == 'Test Album', album
+    assert body_updated == body, body_updated

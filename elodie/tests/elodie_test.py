@@ -240,6 +240,32 @@ def test_import_file_send_to_trash_true():
 
     assert dest_path1 is not None
 
+@mock.patch.object(elodie, 'send2trash')
+def test_import_file_send_to_trash_after_complete_import(mock_send2trash):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = '%s/plain.jpg' % folder
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    helper.reset_dbs()
+    dest_path = elodie.import_file(origin, folder_destination, False, True, False)
+    helper.restore_dbs()
+
+    destination_original_name = Photo(dest_path).get_original_name()
+    destination_files = [
+        filename
+        for dirname, dirnames, filenames in os.walk(folder_destination)
+        for filename in filenames
+    ]
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    mock_send2trash.assert_called_once_with(origin)
+    assert destination_original_name == 'plain.jpg', destination_original_name
+    assert destination_files == [os.path.basename(dest_path)], destination_files
+
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()
     folder_destination = '{}/destination'.format(folder)

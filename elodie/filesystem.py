@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import time
+from stat import S_IWUSR
 from send2trash import send2trash
 
 from elodie import compatability
@@ -568,8 +569,6 @@ class FileSystem(object):
         file_name = self.get_file_name(metadata)
         dest_path = os.path.join(dest_directory, file_name)        
 
-        media.set_original_name()
-
         # If source and destination are identical then
         #  we should not write the file. gh-210
         if(_file == dest_path):
@@ -590,6 +589,12 @@ class FileSystem(object):
             exif_original_file_exists = True
 
         if(move is True):
+            # When moving we write the original name to the file itself
+            #  since it does not remain at the source.
+            if not constants.dry_run:
+                media.set_original_name()
+                exif_original_file_exists = os.path.exists(exif_original_file)
+
             stat = os.stat(_file)
             # Move the processed file into the destination directory
             self._file_operation('move', _file, dest_path)
@@ -603,22 +608,28 @@ class FileSystem(object):
                 print(f"[DRY-RUN] Would set utime for: {dest_path}")
         else:
             if(exif_original_file_exists is True):
+                # The source was updated before calling this method
+                #  (e.g. import with --location or --time).
                 # Move the newly processed file with any updated tags to the
                 # destination directory
                 self._file_operation('move', _file, dest_path)
                 # Move the exif _original back to the initial source file
                 self._file_operation('move', exif_original_file, _file)
+                # Set the utime based on what the original file contained
+                #  before we made any changes.
+                if not constants.dry_run:
+                    os.utime(_file, (stat_info_original.st_atime, stat_info_original.st_mtime))
             else:
+                # Copy the source as is so it is not modified in any way,
+                #  not even its ctime. gh-533
                 self._file_operation('copy', _file, dest_path)
 
-            # Set the utime based on what the original file contained 
-            #  before we made any changes.
-            # Then set the utime on the destination file based on metadata.
+            # Write the original name to the copy and then set the utime on
+            #  it based on metadata.
             if not constants.dry_run:
-                os.utime(_file, (stat_info_original.st_atime, stat_info_original.st_mtime))
+                self.set_original_name_on_copy(media, _file, dest_path)
                 self.set_utime_from_metadata(metadata, dest_path)
             else:
-                print(f"[DRY-RUN] Would set utime for: {_file}")
                 print(f"[DRY-RUN] Would set utime from metadata for: {dest_path}")
 
         db = Db()
@@ -634,6 +645,28 @@ class FileSystem(object):
 
 
         return dest_path
+
+    def set_original_name_on_copy(self, media, source, dest_path):
+        """Store the name of the source file in the metadata of its copy.
+
+        If the file already had an original name it is kept.
+
+        :param media: The media object of the source file.
+        :param str source: Path of the source file.
+        :param str dest_path: Path of the copy.
+        """
+        # The copy has the permissions of the source which may be read-only.
+        dest_mode = os.stat(dest_path).st_mode
+        if not dest_mode & S_IWUSR:
+            os.chmod(dest_path, dest_mode | S_IWUSR)
+
+        media.__class__(dest_path).set_original_name(os.path.basename(source))
+
+        # exiftool (and Text) keep a copy of the file before writing to it
+        #  which we do not need.
+        dest_original = dest_path + '_original'
+        if os.path.exists(dest_original):
+            os.remove(dest_original)
 
     def set_utime_from_metadata(self, metadata, file_path):
         """ Set the modification time on the file based on the file name.

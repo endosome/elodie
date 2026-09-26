@@ -151,9 +151,6 @@ def test_set_original_name():
         random_file_name = '%s%s' % (helper.random_string(10), ext)
         origin = '%s/%s' % (folder, random_file_name)
         file_path = helper.get_file(file) or helper.get_asset(file)
-        if file_path is None:
-            shutil.rmtree(folder)
-            pytest.skip('{} could not be downloaded'.format(file))
 
         shutil.copyfile(file_path, origin)
 

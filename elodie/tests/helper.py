@@ -43,12 +43,18 @@ def create_working_folder(format=None):
 ASSETS = json.load(open(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'assets.json')))
 _verified_assets = set()
 
+class AssetError(Exception):
+    pass
+
 def get_asset(name):
     """Get the path of a test asset in files/ (ignored by git). Download it
     from the release pinned in assets.json if it is missing or its sha256
     does not match.
 
-    :returns: str path of the file or None if it could not be downloaded.
+    :returns: str path of the file.
+    :raises AssetError: if the file could not be downloaded or its sha256
+        does not match. Tests fail then instead of being skipped so that a
+        missing asset (i.e. a removed release) cannot go unnoticed.
     """
     asset = next(a for a in ASSETS['assets'] if a['name'] == name)
     file_path = get_file_path(name)
@@ -62,19 +68,24 @@ def get_asset(name):
     # Download to a temporary name first since tests may run in parallel
     temporary_path = '{}.{}.download'.format(file_path, random_string(10))
     try:
-        with urllib.request.urlopen(url, timeout=120) as response, open(temporary_path, 'wb') as f:
-            while True:
-                chunk = response.read(1 << 20)
-                if not chunk:
-                    break
-                f.write(chunk)
-        if checksum(temporary_path) != asset['sha256']:
-            return None
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response, open(temporary_path, 'wb') as f:
+                while True:
+                    chunk = response.read(1 << 20)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+        except Exception as e:
+            raise AssetError('Could not download test asset {} from {}: {}'.format(name, url, e))
+
+        downloaded_checksum = checksum(temporary_path)
+        if downloaded_checksum != asset['sha256']:
+            raise AssetError('Test asset {} from {} has sha256 {} instead of {} (see assets.json)'.format(
+                name, url, downloaded_checksum, asset['sha256']))
+
         os.replace(temporary_path, file_path)
         _verified_assets.add(name)
         return file_path
-    except Exception:
-        return None
     finally:
         if os.path.exists(temporary_path):
             os.remove(temporary_path)

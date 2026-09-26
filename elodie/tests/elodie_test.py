@@ -4,6 +4,7 @@ import unittest.mock as mock
 import os
 import sys
 import shutil
+import subprocess
 import time
 
 from click.testing import CliRunner
@@ -222,24 +223,46 @@ def test_import_file_send_to_trash_false():
 
     assert dest_path1 is not None
 
+@pytest.mark.skipif(not sys.platform.startswith('linux'), reason='The trash can only be isolated on Linux')
 def test_import_file_send_to_trash_true():
-    pytest.skip("Temporarily disable send2trash test gh-230")
-
+    # This moves a file to the trash for real. send2trash reads the location
+    #  of the trash when it is imported, so we run elodie in a new process
+    #  with HOME and XDG_DATA_HOME in a temporary folder. Otherwise the file
+    #  would end up in the trash of the user running the tests. gh-230
     temporary_folder, folder = helper.create_working_folder()
-    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    home = os.path.join(temporary_folder, 'home')
+    source = os.path.join(temporary_folder, 'source')
+    destination = os.path.join(temporary_folder, 'destination')
+    os.makedirs(home)
+    os.makedirs(source)
 
-    origin = '%s/valid.txt' % folder
+    origin = os.path.join(source, 'valid.txt')
     shutil.copyfile(helper.get_file('valid.txt'), origin)
 
-    helper.reset_dbs()
-    dest_path1 = elodie.import_file(origin, folder_destination, False, True, False)
-    assert not os.path.isfile(origin), origin
-    helper.restore_dbs()
+    environment = dict(os.environ, HOME=home, XDG_DATA_HOME=os.path.join(home, 'share'))
+    result = subprocess.run(
+        [sys.executable, elodie_path, 'import', '--trash', '--destination', destination, origin],
+        env=environment, capture_output=True, text=True
+    )
 
-    shutil.rmtree(folder)
-    shutil.rmtree(folder_destination)
+    trashed_file = os.path.join(home, 'share', 'Trash', 'files', 'valid.txt')
+    trash_info = os.path.join(home, 'share', 'Trash', 'info', 'valid.txt.trashinfo')
+    origin_exists = os.path.exists(origin)
+    trashed_file_exists = os.path.isfile(trashed_file)
+    trash_info_contents = open(trash_info).read() if os.path.isfile(trash_info) else None
+    imported_files = [
+        filename
+        for dirname, dirnames, filenames in os.walk(destination)
+        for filename in filenames
+    ]
 
-    assert dest_path1 is not None
+    shutil.rmtree(temporary_folder)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not origin_exists, origin
+    assert trashed_file_exists, result.stdout + result.stderr
+    assert trash_info_contents is not None and 'Path={}'.format(origin) in trash_info_contents, trash_info_contents
+    assert len(imported_files) == 1, imported_files
 
 @mock.patch.object(elodie, 'send2trash')
 def test_import_file_send_to_trash_after_complete_import(mock_send2trash):

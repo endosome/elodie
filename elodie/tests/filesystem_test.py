@@ -20,6 +20,7 @@ from elodie.media.text import Text
 from elodie.media.media import Media
 from elodie.media.photo import Photo
 from elodie.media.video import Video
+from elodie.external.pyexiftool import ExifTool
 import pytest
 
 os.environ['TZ'] = 'GMT'
@@ -2206,4 +2207,31 @@ def test_list_directory_is_cached_until_the_directory_changes():
     assert calls_before_change == 1, calls_before_change
     assert sorted(first) == sorted(second) == ['a.jpg']
     assert sorted(third) == ['a.jpg', 'b.jpg'], third
+
+# gh-474: the photo and video of an Apple Live Photo taken east of UTC get the
+#  same name. The video stores the UTC time in QuickTime:CreateDate.
+def test_process_file_live_photo_gets_the_same_name():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+    photo_path = os.path.join(folder, 'IMG_1234.HEIC')
+    video_path = os.path.join(folder, 'IMG_1234.MOV')
+    shutil.copyfile(helper.get_file('photo.heic'), photo_path)
+    shutil.copyfile(helper.get_file('video.mov'), video_path)
+    ExifTool().execute(
+        b'-overwrite_original',
+        b'-QuickTime:CreationDate=2019:05:26 10:33:20+02:00',
+        b'-QuickTime:CreateDate=2019:05:26 08:33:20',
+        b'-QuickTime:MediaCreateDate=2019:05:26 08:33:20',
+        video_path.encode(),
+    )
+
+    photo_dest = filesystem.process_file(photo_path, library, Photo(photo_path), allowDuplicate=True)
+    video_dest = filesystem.process_file(video_path, library, Video(video_path), allowDuplicate=True)
+
+    shutil.rmtree(temporary_folder)
+
+    photo_name = os.path.splitext(os.path.basename(photo_dest))[0]
+    video_name = os.path.splitext(os.path.basename(video_dest))[0]
+    assert photo_name == video_name == '2019-05-26_10-33-20-img_1234', (photo_name, video_name)
 

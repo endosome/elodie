@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.realp
 import helper
 from elodie.media.media import Media
 from elodie.media.video import Video
+from elodie.external.pyexiftool import ExifTool
 
 os.environ['TZ'] = 'GMT'
 
@@ -230,6 +231,69 @@ def test_get_date_taken_matroska(file_name):
 
     assert video.is_valid()
     assert date_taken == helper.time_convert((2019, 7, 4, 12, 0, 0, 3, 185, 0)), date_taken
+
+def _video_with_tags(folder, *tags):
+    origin = os.path.join(folder, 'video.mov')
+    shutil.copyfile(helper.get_file('video.mov'), origin)
+    ExifTool().execute(b'-overwrite_original', *[t.encode() for t in tags] + [origin.encode()])
+    return origin
+
+# gh-378, gh-474: an iPhone stores the local time with its offset in
+#  QuickTime:CreationDate and the UTC time in QuickTime:CreateDate. East of
+#  UTC the UTC time is earlier and was used, so the video of a Live Photo got
+#  a different date than its photo.
+def test_get_date_taken_prefers_creation_date_over_earlier_utc_date():
+    folder = tempfile.mkdtemp()
+    origin = _video_with_tags(
+        folder,
+        '-QuickTime:CreationDate=2021:05:01 12:00:00+02:00',
+        '-QuickTime:CreateDate=2021:05:01 10:00:00',
+        '-QuickTime:MediaCreateDate=2021:05:01 10:00:00',
+    )
+
+    date_taken = Video(origin).get_date_taken()
+
+    shutil.rmtree(folder)
+
+    assert date_taken == helper.time_convert((2021, 5, 1, 12, 0, 0, 5, 121, 0)), date_taken
+
+def test_get_date_taken_skips_unset_date():
+    folder = tempfile.mkdtemp()
+    origin = _video_with_tags(
+        folder,
+        '-QuickTime:CreationDate=',
+        '-QuickTime:CreateDate=0000:00:00 00:00:00',
+        '-QuickTime:MediaCreateDate=2021:05:01 10:00:00',
+    )
+
+    date_taken = Video(origin).get_date_taken()
+
+    shutil.rmtree(folder)
+
+    assert date_taken == helper.time_convert((2021, 5, 1, 10, 0, 0, 5, 121, 0)), date_taken
+
+def test_get_date_taken_prefers_metadata_over_older_file_time():
+    folder = tempfile.mkdtemp()
+    origin = os.path.join(folder, 'video.mov')
+    shutil.copyfile(helper.get_file('video.mov'), origin)
+    os.utime(origin, (946684800, 946684800))  # 2000-01-01
+
+    date_taken = Video(origin).get_date_taken()
+
+    shutil.rmtree(folder)
+
+    assert date_taken == (2015, 1, 19, 12, 45, 11, 0, 19, 0), date_taken
+
+def test_get_date_taken_without_metadata_uses_file_time():
+    folder = tempfile.mkdtemp()
+    origin = _video_with_tags(folder, '-time:all=')
+    os.utime(origin, (946684800, 946684800))  # 2000-01-01
+
+    date_taken = Video(origin).get_date_taken()
+
+    shutil.rmtree(folder)
+
+    assert date_taken == time.gmtime(946684800), date_taken
 
 @pytest.mark.parametrize('value,expected', [
     ('2019-07-04', '2019:07:04 00:00:00'),

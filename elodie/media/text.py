@@ -16,6 +16,15 @@ from elodie.compatability import _gmtime
 from elodie.media.base import Base
 
 
+def _open(path, mode):
+    # Text files are read and written as UTF-8 regardless of the platform's
+    #  default encoding (e.g. cp1252 on Windows).
+    # surrogateescape keeps bytes which are not valid UTF-8 and newline=''
+    #  keeps line endings so we do not alter the content of the file.
+    return open(path, mode, encoding='utf-8', errors='surrogateescape',
+                newline='')
+
+
 class Text(Base):
 
     """The class for all text files.
@@ -146,13 +155,10 @@ class Text(Base):
         if source is None:
             return None
 
-        try:
-            with open(source, 'r') as f:
-                first_line = f.readline().strip()
-        except UnicodeDecodeError:
-            # Handle non-UTF-8 files by reading with error handling
-            with open(source, 'r', encoding='utf-8', errors='ignore') as f:
-                first_line = f.readline().strip()
+        # Metadata values end up in file names and logs so we drop bytes
+        #  which are not valid UTF-8 instead of escaping them.
+        with open(source, 'r', encoding='utf-8', errors='ignore') as f:
+            first_line = f.readline().strip()
 
         try:
             parsed_json = loads(first_line)
@@ -190,16 +196,16 @@ class Text(Base):
         if has_metadata:
             # Update the first line of this file in place
             # http://stackoverflow.com/a/14947384
-            with open(source, 'r') as f_read:
+            with _open(source, 'r') as f_read:
                 f_read.readline()
-                with open(source, 'w') as f_write:
+                with _open(source, 'w') as f_write:
                     f_write.write("{}\n".format(metadata_as_json))
                     copyfileobj(f_read, f_write)
         else:
             # Prepend the metadata to the file
-            with open(source, 'r') as f_read:
+            with _open(source, 'r') as f_read:
                 original_contents = f_read.read()
-                with open(source, 'w') as f_write:
+                with _open(source, 'w') as f_write:
                     f_write.write("{}\n{}".format(
                         metadata_as_json,
                         original_contents)

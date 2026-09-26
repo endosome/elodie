@@ -154,6 +154,16 @@ def windows_mktime(t):
         raise OverflowError('mktime argument out of range')
     return seconds
 
+# windows_open(file, mode)
+# Behaves like open on Windows where text files default to the ANSI
+#  code page (cp1252) instead of UTF-8.
+# Use with monkeypatch.setattr('module.open', helper.windows_open, raising=False)
+
+def windows_open(file, mode='r', *args, **kwargs):
+    if 'b' not in mode and 'encoding' not in kwargs:
+        kwargs['encoding'] = 'cp1252'
+    return open(file, mode, *args, **kwargs)
+
 def time_convert(s_time):
     if is_windows():
         return time.gmtime((time.mktime(s_time)))

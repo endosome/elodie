@@ -13,6 +13,8 @@ are used to represent the actual files.
 import mimetypes
 import os
 
+from elodie import constants
+
 try:        # Py3k compatibility
     basestring
 except NameError:
@@ -218,6 +220,20 @@ class Base(object):
         for key in kwargs:
             if(key in metadata):
                 self.metadata[key] = kwargs[key]
+
+    def set_metadata_if_dry_run(self, **kwargs):
+        """In dry-run mode update the metadata of this instance instead of
+        writing it to the file. That way the destination of the file is
+        determined as if it had been written.
+
+        :params dict kwargs: Named parameters to update.
+        :returns: bool, True if in dry-run mode and nothing should be written.
+        """
+        if not constants.dry_run:
+            return False
+
+        self.set_metadata(**kwargs)
+        return True
 
     def set_original_name(self):
         """Stores the original file name into EXIF/metadata.

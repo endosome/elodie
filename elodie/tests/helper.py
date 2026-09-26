@@ -130,6 +130,18 @@ def path_tz_fix(file_name):
 # between UTC and local time
 # (Windows only)
 
+_original_gmtime = time.gmtime
+
+# windows_gmtime(seconds)
+# Behaves like time.gmtime on Windows, which raises OSError
+#  for negative timestamps (dates before 1970).
+# Use with monkeypatch.setattr(time, 'gmtime', helper.windows_gmtime)
+
+def windows_gmtime(seconds=None):
+    if seconds is not None and seconds < 0:
+        raise OSError(22, 'Invalid argument')
+    return _original_gmtime(seconds)
+
 def time_convert(s_time):
     if is_windows():
         return time.gmtime((time.mktime(s_time)))

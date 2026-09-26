@@ -1,6 +1,9 @@
 import os
 import shutil
 import sys
+import time
+
+from datetime import datetime, timedelta
 
 from elodie import constants
 
@@ -23,6 +26,19 @@ def _decode(string, encoding=sys.getfilesystemencoding()):
         return string.decode(encoding)
 
     return string
+
+def _gmtime(seconds):
+    """Return a UTC time.struct_time for seconds since the epoch.
+
+    Windows cannot handle negative timestamps (dates before 1970) with
+    time.gmtime so we compute those with datetime instead.
+    """
+    if seconds < 0:
+        dt = datetime(1970, 1, 1) + timedelta(seconds=seconds)
+        return dt.utctimetuple()
+
+    return time.gmtime(seconds)
+
 
 def _bytes(string):
     if constants.python_version == 3:

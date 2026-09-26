@@ -16,6 +16,7 @@ from re import compile
 from PIL import Image
 
 from elodie import log
+from elodie.compatability import _gmtime
 from .media import Media
 
 
@@ -82,7 +83,7 @@ class Photo(Media):
         if(seconds_since_epoch == 0):
             return None
 
-        return time.gmtime(seconds_since_epoch)
+        return _gmtime(seconds_since_epoch)
 
     def is_valid(self):
         """Check the file extension against valid file extensions.

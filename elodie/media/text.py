@@ -207,6 +207,10 @@ class Text(Base):
         # This is to keep all file processing logic in line with exiftool
         copy2(source, source + '_original')
 
+        # Files without a date in their metadata use the modification time
+        #  as the date taken. Keep it so writing metadata does not change it.
+        stat_info = os.stat(source)
+
         # Read the whole file before opening it for writing since that
         #  truncates it. Then replace the metadata line or prepend it.
         with _open(source, 'r') as f_read:
@@ -219,6 +223,8 @@ class Text(Base):
                 metadata_as_json,
                 original_contents)
             )
+
+        os.utime(source, ns=(stat_info.st_atime_ns, stat_info.st_mtime_ns))
 
         self.reset_cache()
         return True

@@ -328,6 +328,54 @@ def test_import_file_send_to_trash_not_when_source_is_destination(mock_send2tras
     assert dest_path1_exists, dest_path1
     mock_send2trash.assert_not_called()
 
+@mock.patch('elodie.constants.dry_run', False)
+def test_import_dry_run_does_not_create_destination():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    destination = os.path.join(folder_destination, 'library')
+
+    shutil.copyfile(helper.get_file('plain.jpg'), '%s/plain.jpg' % folder)
+    shutil.copyfile(helper.get_file('valid.txt'), '%s/valid.txt' % folder)
+
+    runner = CliRunner()
+    result = runner.invoke(elodie._import, ['--destination', destination, '--dry-run', folder])
+    destination_exists = os.path.exists(destination)
+    source_contents = sorted(os.listdir(folder))
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert '[DRY-RUN] Would create directory' in result.output, result.output
+    assert not destination_exists, destination
+    assert source_contents == ['plain.jpg', 'valid.txt'], source_contents
+
+@mock.patch('elodie.constants.dry_run', False)
+def test_update_dry_run_does_not_create_directories():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = '%s/plain.jpg' % folder
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+
+    def directories():
+        return sorted(
+            dirname for dirname, dirnames, filenames in os.walk(folder_destination)
+        )
+
+    directories_before = directories()
+    runner = CliRunner()
+    result = runner.invoke(elodie._update, ['--album', 'test', '--dry-run', dest_path])
+    directories_after = directories()
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert '[DRY-RUN] Would create directory' in result.output, result.output
+    assert directories_after == directories_before, directories_after
+
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()
     folder_destination = '{}/destination'.format(folder)

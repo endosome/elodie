@@ -54,7 +54,7 @@ jobs:
       - name: Run tests
         env:
           # Location tests need a MapQuest key, set it as a repository secret
-          ELODIE_MAPQUEST_KEY: ${{ secrets.MAPQUEST_KEY }}
+          ELODIE_MAPQUEST_KEY: ${{ secrets.ELODIE_MAPQUEST_KEY }}
         run: pytest elodie/tests -v --cov=elodie --cov-report=xml
 
       - name: Upload coverage to Coveralls

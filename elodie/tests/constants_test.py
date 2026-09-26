@@ -9,47 +9,47 @@ from importlib import reload
 
 from unittest.mock import patch
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))))
 
 from elodie import constants
 
 BASE_PATH = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
+@pytest.fixture
+def environ(monkeypatch):
+    # constants reads environment variables when it is loaded.
+    # Restore them and reload constants after the test so that changes
+    #  (e.g. removing ELODIE_MAPQUEST_KEY) do not leak into other tests.
+    yield monkeypatch
+    monkeypatch.undo()
+    reload(constants)
+
 def test_debug():
     # This seems pointless but on Travis we explicitly modify the file to be True
     assert constants.debug == constants.debug, constants.debug
 
-def test_application_directory_default():
-    if('ELODIE_APPLICATION_DIRECTORY' in os.environ):
-        del os.environ['ELODIE_APPLICATION_DIRECTORY']
+def test_application_directory_default(environ):
+    environ.delenv('ELODIE_APPLICATION_DIRECTORY', raising=False)
     reload(constants)
     expected_path = '{}/.elodie'.format(os.path.expanduser('~'))
     assert constants.application_directory() == expected_path, constants.application_directory()
 
-def test_application_directory_override_invalid():
-    os.environ['ELODIE_APPLICATION_DIRECTORY'] = '/foo/bar'
+def test_application_directory_override_invalid(environ):
+    environ.setenv('ELODIE_APPLICATION_DIRECTORY', '/foo/bar')
     reload(constants)
     directory_to_check = constants.application_directory()
-
-    # reset
-    if('ELODIE_APPLICATION_DIRECTORY' in os.environ):
-        del os.environ['ELODIE_APPLICATION_DIRECTORY']
-    reload(constants)
 
     expected_path = '{}/.elodie'.format(os.path.expanduser('~'))
     assert directory_to_check == expected_path, constants.application_directory()
 
-def test_application_directory_override_valid():
+def test_application_directory_override_valid(environ):
     cwd = os.getcwd()
-    os.environ['ELODIE_APPLICATION_DIRECTORY'] = cwd
+    environ.setenv('ELODIE_APPLICATION_DIRECTORY', cwd)
     reload(constants)
     directory_to_check = constants.application_directory()
     hash_db_to_check = constants.hash_db()
-
-    # reset
-    if('ELODIE_APPLICATION_DIRECTORY' in os.environ):
-        del os.environ['ELODIE_APPLICATION_DIRECTORY']
-    reload(constants)
 
     assert directory_to_check == cwd, constants.application_directory()
     assert cwd in hash_db_to_check, constants.hash_db()
@@ -71,33 +71,22 @@ def test_exiftool_config():
 def test_mapquest_base_url_default():
     assert constants.mapquest_base_url == 'https://www.mapquestapi.com', constants.mapquest_base_url
 
-def test_mapquest_base_url_override():
-    os.environ['ELODIE_MAPQUEST_BASE_URL'] = 'foobar'
+def test_mapquest_base_url_override(environ):
+    environ.setenv('ELODIE_MAPQUEST_BASE_URL', 'foobar')
     reload(constants)
     url_to_check = constants.mapquest_base_url
 
-    # reset
-    if('ELODIE_MAPQUEST_BASE_URL' in os.environ):
-        del os.environ['ELODIE_MAPQUEST_BASE_URL']
-    reload(constants)
-
     assert url_to_check == 'foobar', constants.mapquest_base_url
 
-def test_mapquest_key_default():
-    if('ELODIE_MAPQUEST_KEY' in os.environ):
-        del os.environ['ELODIE_MAPQUEST_KEY']
+def test_mapquest_key_default(environ):
+    environ.delenv('ELODIE_MAPQUEST_KEY', raising=False)
     reload(constants)
     assert constants.mapquest_key == None, constants.mapquest_key
 
-def test_mapquest_key_override():
-    os.environ['ELODIE_MAPQUEST_KEY'] = 'foobar'
+def test_mapquest_key_override(environ):
+    environ.setenv('ELODIE_MAPQUEST_KEY', 'foobar')
     reload(constants)
     key_to_check = constants.mapquest_key
-
-    # reset
-    if('ELODIE_MAPQUEST_KEY' in os.environ):
-        del os.environ['ELODIE_MAPQUEST_KEY']
-    reload(constants)
 
     assert key_to_check == 'foobar', key_to_check
 

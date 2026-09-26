@@ -7,7 +7,7 @@ are tracked by Elodie.
 
 from json import dumps, loads
 import os
-from shutil import copy2, copyfileobj
+from shutil import copy2
 import time
 
 # load modules
@@ -193,23 +193,18 @@ class Text(Base):
         # This is to keep all file processing logic in line with exiftool
         copy2(source, source + '_original')
 
-        if has_metadata:
-            # Update the first line of this file in place
-            # http://stackoverflow.com/a/14947384
-            with _open(source, 'r') as f_read:
+        # Read the whole file before opening it for writing since that
+        #  truncates it. Then replace the metadata line or prepend it.
+        with _open(source, 'r') as f_read:
+            if has_metadata:
                 f_read.readline()
-                with _open(source, 'w') as f_write:
-                    f_write.write("{}\n".format(metadata_as_json))
-                    copyfileobj(f_read, f_write)
-        else:
-            # Prepend the metadata to the file
-            with _open(source, 'r') as f_read:
-                original_contents = f_read.read()
-                with _open(source, 'w') as f_write:
-                    f_write.write("{}\n{}".format(
-                        metadata_as_json,
-                        original_contents)
-                    )
+            original_contents = f_read.read()
+
+        with _open(source, 'w') as f_write:
+            f_write.write("{}\n{}".format(
+                metadata_as_json,
+                original_contents)
+            )
 
         self.reset_cache()
         return True

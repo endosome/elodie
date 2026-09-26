@@ -398,3 +398,16 @@ def test_set_album_keeps_crlf_line_endings():
     assert status == True, status
     assert album == 'Test Album', album
     assert body_updated == body, body_updated
+
+def test_set_album_keeps_content_of_large_file():
+    temporary_folder, folder = helper.create_working_folder()
+
+    # Larger than the read buffer (8 KB) of the file object
+    body = b'x' * 20000 + b'\nlast line\n'
+    status, album, body_updated = _write_and_set_album(folder, b'{"title":"large"}\n' + body)
+
+    shutil.rmtree(folder)
+
+    assert status == True, status
+    assert album == 'Test Album', album
+    assert body_updated == body, len(body_updated)

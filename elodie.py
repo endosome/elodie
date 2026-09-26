@@ -96,11 +96,7 @@ def is_imported(_file):
     it was imported before.
     """
     db = Db()
-    checksum = db.checksum(_file)
-    if checksum is None:
-        return False
-
-    checksum_file = db.get_hash(checksum)
+    checksum_file = db.get_hash(db.checksum(_file))
     return (
         checksum_file is not None and
         os.path.isfile(checksum_file) and

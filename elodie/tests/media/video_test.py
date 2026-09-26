@@ -28,6 +28,8 @@ def test_video_extensions():
     assert 'mov' in extensions
     assert 'm4v' in extensions
     assert '3gp' in extensions
+    assert 'mkv' in extensions
+    assert 'webm' in extensions
 
     valid_extensions = Video.get_valid_extensions()
 
@@ -219,3 +221,27 @@ def test_set_title_non_ascii():
     shutil.rmtree(folder)
 
     assert metadata['title'] == unicode_title, metadata['title']
+
+# gh-457: mkv and webm store the date as Matroska:DateTimeOriginal
+@pytest.mark.parametrize('file_name', ['video.mkv', 'video.webm'])
+def test_get_date_taken_matroska(file_name):
+    video = Video(helper.get_file(file_name))
+    date_taken = video.get_date_taken()
+
+    assert video.is_valid()
+    assert date_taken == helper.time_convert((2019, 7, 4, 12, 0, 0, 3, 185, 0)), date_taken
+
+@pytest.mark.parametrize('value,expected', [
+    ('2019-07-04', '2019:07:04 00:00:00'),
+    ('2019:07:04', '2019:07:04 00:00:00'),
+    ('2019-07-04T12:30:15', '2019:07:04 12:30:15'),
+    ('2019-07-04T12:30', '2019:07:04 12:30:00'),
+    ('2019-07-04 12:30:15+02:00', '2019:07:04 12:30:15+02:00'),
+    ('2019:07:04 12:00:00Z', '2019:07:04 12:00:00Z'),
+    ('2015:01:19 12:45:11-08:00', '2015:01:19 12:45:11-08:00'),
+    ('2019', '2019'),
+    ('', ''),
+])
+def test_normalize_date_string(value, expected):
+    assert Video().normalize_date_string(value) == expected
+

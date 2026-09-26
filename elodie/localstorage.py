@@ -117,7 +117,7 @@ class Db(object):
         :param str file_path: Path to the file to create a hash for.
         :param int blocksize: Read blocks of this size from the file when
             creating the hash.
-        :returns: str or None
+        :returns: str
         """
         hasher = hashlib.sha256()
         with open(file_path, 'rb') as f:
@@ -127,7 +127,6 @@ class Db(object):
                 hasher.update(buf)
                 buf = f.read(blocksize)
             return hasher.hexdigest()
-        return None
 
     def get_hash(self, key):
         """Get the hash value for a given key.

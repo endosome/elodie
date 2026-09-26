@@ -20,7 +20,12 @@ class Audio(Video):
     __name__ = 'Audio'
 
     #: Valid extensions for audio files.
-    extensions = ('m4a',)
+    extensions = ('m4a', 'mp3', 'opus', 'ogg', 'flac')
 
     def __init__(self, source=None):
         super(Audio, self).__init__(source)
+        # mp3 (ID3v2.4) and flac, ogg and opus (Vorbis comments)
+        self.exif_map['date_taken'] = self.exif_map['date_taken'] + [
+            'ID3:RecordingTime',
+            'Vorbis:Date'
+        ]

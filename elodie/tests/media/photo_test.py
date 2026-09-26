@@ -37,6 +37,7 @@ def test_photo_extensions():
     assert 'nef' in extensions
     assert 'png' in extensions
     assert 'rw2' in extensions
+    assert 'webp' in extensions
 
     valid_extensions = Photo.get_valid_extensions()
 
@@ -371,6 +372,7 @@ PHOTO_TYPE_DATES = {
     'nef': (2008, 10, 24, 9, 12, 56, 4, 298, 0),
     'png': (2015, 1, 18, 12, 1, 1, 6, 18, 0),
     'rw2': (2014, 11, 19, 23, 7, 44, 2, 323, 0),
+    'webp': (2019, 7, 4, 12, 0, 0, 3, 185, 0),
 }
 
 @pytest.mark.parametrize(

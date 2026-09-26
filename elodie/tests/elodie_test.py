@@ -759,6 +759,27 @@ def test_import_file_with_very_large_image():
 
     assert dest_path_exists, dest_path
 
+@pytest.mark.parametrize('file_name', [
+    'video.mkv', 'video.webm', 'audio.mp3', 'audio.flac', 'audio.ogg', 'audio.opus', 'photo.webp'
+])
+def test_import_file_new_formats(file_name):
+    # gh-457
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+
+    helper.reset_dbs()
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+    helper.restore_dbs()
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert dest_path is not None
+    assert os.path.join('2019-07-Jul', 'Unknown Location', '2019-07-04_') in dest_path, dest_path
+
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()
     folder_destination = '{}/destination'.format(folder)

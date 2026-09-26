@@ -68,7 +68,7 @@ class Media(Base):
 
         for album_key in self.album_keys:
             if album_key in exiftool_attributes:
-                return exiftool_attributes[album_key]
+                return str(exiftool_attributes[album_key])
 
         return None
 
@@ -167,7 +167,7 @@ class Media(Base):
 
         for camera_make_key in self.camera_make_keys:
             if camera_make_key in exiftool_attributes:
-                return exiftool_attributes[camera_make_key]
+                return str(exiftool_attributes[camera_make_key])
 
         return None
 
@@ -186,7 +186,7 @@ class Media(Base):
 
         for camera_model_key in self.camera_model_keys:
             if camera_model_key in exiftool_attributes:
-                return exiftool_attributes[camera_model_key]
+                return str(exiftool_attributes[camera_model_key])
 
         return None
 
@@ -206,7 +206,7 @@ class Media(Base):
         if(self.original_name_key not in exiftool_attributes):
             return None
 
-        return exiftool_attributes[self.original_name_key]
+        return str(exiftool_attributes[self.original_name_key])
 
     def get_title(self):
         """Get the title for a photo of video
@@ -224,7 +224,7 @@ class Media(Base):
         if(self.title_key not in exiftool_attributes):
             return None
 
-        return exiftool_attributes[self.title_key]
+        return str(exiftool_attributes[self.title_key])
 
     def reset_cache(self):
         """Resets any internal cache

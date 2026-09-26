@@ -890,6 +890,44 @@ def test_import_same_file_through_symlink_does_not_stop_the_run():
     assert 'Success                        1' in result.output, result.output
     assert 'Error                          1' in result.output, result.output
 
+@mock.patch.object(elodie, 'send2trash')
+def test_import_file_send_to_trash_with_sidecars(mock_send2trash):
+    # gh-341: imported sidecars follow their file to the trash, a shared one
+    #  only with the last file which uses it
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'IMG_1.jpg'))
+    shutil.copyfile(helper.get_file('photo.png'), os.path.join(folder, 'IMG_1.png'))
+    for name in ('IMG_1.xmp', 'IMG_1.jpg.xmp', 'orphan.xmp'):
+        with open(os.path.join(folder, name), 'w') as f:
+            f.write(name)
+    trashed = []
+
+    def trash(path):
+        trashed.append(os.path.basename(path))
+        os.remove(path)
+    mock_send2trash.side_effect = trash
+
+    helper.reset_dbs()
+    dest_jpg = elodie.import_file(os.path.join(folder, 'IMG_1.jpg'), folder_destination, False, True, False)
+    trashed_after_jpg = list(trashed)
+    dest_png = elodie.import_file(os.path.join(folder, 'IMG_1.png'), folder_destination, False, True, False)
+    helper.restore_dbs()
+    left_in_source = sorted(os.listdir(folder))
+    library_sidecars = sorted(
+        name for dirname, dirnames, names in os.walk(folder_destination) for name in names if name.endswith('.xmp')
+    )
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert dest_jpg is not None and dest_png is not None
+    # IMG_1.xmp is still used by IMG_1.png after IMG_1.jpg was imported
+    assert sorted(trashed_after_jpg) == ['IMG_1.jpg', 'IMG_1.jpg.xmp'], trashed_after_jpg
+    assert sorted(trashed) == ['IMG_1.jpg', 'IMG_1.jpg.xmp', 'IMG_1.png', 'IMG_1.xmp'], trashed
+    assert left_in_source == ['orphan.xmp'], left_in_source
+    assert len(library_sidecars) == 3, library_sidecars
+
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()
     folder_destination = '{}/destination'.format(folder)

@@ -240,6 +240,22 @@ synology_folders=@eaDir
 thumbnails=.thumbnails
 ```
 
+### Sidecar files
+
+Edits saved by other apps in sidecar files next to a photo, like `.xmp` files from Lightroom or darktable and `.AAE` files from Apple devices, are imported together with the photo. A sidecar belongs to a photo when it is in the same folder and has the same name, ignoring case, either without the photo's extension (`IMG_1234.xmp`) or with it (`IMG_1234.CR3.xmp`). It is renamed to follow the photo's new name, and a sidecar shared by a RAW+JPEG pair is copied next to both.
+
+* With `--trash` or when running `update` the sidecar follows the photo, but only after the photo was imported.
+* When the photo was imported before, its sidecar is left in place and reported.
+* An existing, different sidecar in your library is never overwritten.
+* Sidecars without a photo are left in place.
+
+You can choose the extensions in the `[Sidecars]` section of your `config.ini`. The default is `xmp` and `aae`, and an empty value turns this off.
+
+```
+[Sidecars]
+extensions=xmp,aae,dop
+```
+
 ### Create your own folder structure
 
 OK, so what if you don't like the folders being named `2015-07-Jul/Mountain View`? No problem!

@@ -61,6 +61,10 @@ def import_file(_file, destination, album_from_folder, trash, allow_duplicates, 
         log.all('{"source":"%s", "error_msg":"Not a supported file"}' % _file)
         return
 
+    # Changes to the metadata are written to the copy of the file and not
+    #  to the source which should not be modified. gh-533
+    media.defer_writes()
+
     if album_from_folder:
         media.set_album_from_folder()
 

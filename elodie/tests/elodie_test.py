@@ -24,6 +24,7 @@ spec.loader.exec_module(elodie)
 from elodie.config import load_config
 from elodie.localstorage import Db
 from elodie.media.audio import Audio
+from elodie.media.media import Media
 from elodie.media.photo import Photo
 from elodie.media.text import Text
 from elodie.media.video import Video
@@ -513,6 +514,121 @@ def test_update_album_keeps_date_from_modification_time(file_name):
     assert len(updated_files) == 1, updated_files
     assert '/Test Album/' in updated_files[0], updated_files
     assert os.path.basename(updated_files[0]).startswith(expected_date), updated_files
+
+def _create_backup_of_edited_source(folder, file_name):
+    # Simulate an edit made with exiftool which leaves a backup behind
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+    shutil.copyfile(origin, origin + '_original')
+    if file_name.endswith('.txt'):
+        with open(origin, 'a') as f:
+            f.write('edited\n')
+    else:
+        Photo(origin).set_title('edited')
+    return origin
+
+@mock.patch.object(elodie.geolocation, 'coordinates_by_name', return_value={'latitude': 33.6609, 'longitude': -95.5556})
+@pytest.mark.parametrize('file_name', ['plain.jpg', 'valid.txt'])
+@pytest.mark.parametrize('options,metadata_key,expected', [
+    ({}, None, None),
+    ({'time': '2019-07-04 12:00:00'}, 'date_taken', helper.time_convert((2019, 7, 4, 12, 0, 0, 3, 185, 0))),
+    ({'location': 'Paris, Texas'}, 'latitude', 33.6609),
+    ({'album_from_folder': True}, 'album', 'Trip'),
+])
+def test_import_file_writes_metadata_to_copy_only(mock_coordinates, file_name, options, metadata_key, expected):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    source_folder = os.path.join(folder, 'Trip')
+    os.mkdir(source_folder)
+    origin = _create_backup_of_edited_source(source_folder, file_name)
+    backup_checksum = helper.checksum(origin + '_original')
+    source_stat = os.stat(origin)
+    source_checksum = helper.checksum(origin)
+
+    helper.reset_dbs()
+    dest_path = elodie.import_file(
+        origin, folder_destination, options.get('album_from_folder', False),
+        False, False, options.get('location'), options.get('time'))
+    helper.restore_dbs()
+
+    source_stat_after = os.stat(origin)
+    source_checksum_after = helper.checksum(origin)
+    backup_checksum_after = helper.checksum(origin + '_original')
+    source_folder_contents = sorted(os.listdir(source_folder))
+    destination_files = [
+        filename
+        for dirname, dirnames, filenames in os.walk(folder_destination)
+        for filename in filenames
+    ]
+    destination_metadata = Media.get_class_by_file(dest_path, [Photo, Text]).get_metadata()
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    # The source and the backup of the user's edit are left alone
+    assert source_checksum_after == source_checksum
+    assert source_stat_after.st_ctime_ns == source_stat.st_ctime_ns
+    assert source_stat_after.st_ino == source_stat.st_ino
+    assert backup_checksum_after == backup_checksum
+    assert source_folder_contents == [file_name, file_name + '_original'], source_folder_contents
+    # The copy is of the edited file and has the updated metadata
+    assert destination_files == [os.path.basename(dest_path)], destination_files
+    assert helper.checksum(helper.get_file(file_name)) != source_checksum
+    assert destination_metadata['original_name'] == file_name, destination_metadata
+    if metadata_key == 'latitude':
+        assert helper.isclose(destination_metadata['latitude'], expected), destination_metadata
+    elif metadata_key:
+        assert destination_metadata[metadata_key] == expected, destination_metadata
+
+def test_import_file_with_time_is_duplicate_when_imported_again():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = '%s/plain.jpg' % folder
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    helper.reset_dbs()
+    dest_path1 = elodie.import_file(origin, folder_destination, False, False, False, None, '2019-07-04 12:00:00')
+    # The same source file, it should not be imported a second time
+    dest_path2 = elodie.import_file(origin, folder_destination, False, False, False)
+    helper.restore_dbs()
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert dest_path1 is not None
+    assert dest_path2 is None, dest_path2
+
+@mock.patch('elodie.constants.dry_run', False)
+@pytest.mark.parametrize('file_name', ['plain.jpg', 'valid.txt'])
+def test_update_keeps_existing_backup(file_name):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+    # A backup of the file in the library made by the user
+    shutil.copyfile(dest_path, dest_path + '_original')
+    backup_checksum = helper.checksum(dest_path + '_original')
+
+    runner = CliRunner()
+    result = runner.invoke(elodie._update, ['--album', 'Test Album', dest_path])
+    backup_checksum_after = helper.checksum(dest_path + '_original')
+    backup_files = [
+        filename
+        for dirname, dirnames, filenames in os.walk(folder_destination)
+        for filename in filenames
+        if filename.endswith('_original')
+    ]
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert backup_checksum_after == backup_checksum
+    assert backup_files == [os.path.basename(dest_path) + '_original'], backup_files
 
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()

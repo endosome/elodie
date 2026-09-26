@@ -547,7 +547,6 @@ class FileSystem(object):
         if('allowDuplicate' in kwargs):
             allow_duplicate = kwargs['allowDuplicate']
 
-        stat_info_original = os.stat(_file)
         metadata = media.get_metadata()
 
         if(not media.is_valid()):
@@ -580,57 +579,29 @@ class FileSystem(object):
 
         self.create_directory(dest_directory)
 
-        # exiftool renames the original file by appending '_original' to the
-        # file name. A new file is written with new tags with the initial file
-        # name. See exiftool man page for more details.
-        exif_original_file = _file + '_original'
-
-        # Check if the source file was processed by exiftool and an _original
-        # file was created.
-        exif_original_file_exists = False
-        if(os.path.exists(exif_original_file)):
-            exif_original_file_exists = True
-
         if(move is True):
             # When moving we write the original name to the file itself
             #  since it does not remain at the source.
             if not constants.dry_run:
                 media.set_original_name()
-                exif_original_file_exists = os.path.exists(exif_original_file)
 
             stat = os.stat(_file)
             # Move the processed file into the destination directory
             self._file_operation('move', _file, dest_path)
 
-            if(exif_original_file_exists is True):
-                # We can remove it as we don't need the initial file.
-                self._file_operation('remove', exif_original_file)
             if not constants.dry_run:
                 os.utime(dest_path, (stat.st_atime, stat.st_mtime))
             else:
                 print(f"[DRY-RUN] Would set utime for: {dest_path}")
         else:
-            if(exif_original_file_exists is True):
-                # The source was updated before calling this method
-                #  (e.g. import with --location or --time).
-                # Move the newly processed file with any updated tags to the
-                # destination directory
-                self._file_operation('move', _file, dest_path)
-                # Move the exif _original back to the initial source file
-                self._file_operation('move', exif_original_file, _file)
-                # Set the utime based on what the original file contained
-                #  before we made any changes.
-                if not constants.dry_run:
-                    os.utime(_file, (stat_info_original.st_atime, stat_info_original.st_mtime))
-            else:
-                # Copy the source as is so it is not modified in any way,
-                #  not even its ctime. gh-533
-                self._file_operation('copy', _file, dest_path)
+            # Copy the source as is so it is not modified in any way,
+            #  not even its ctime. gh-533
+            self._file_operation('copy', _file, dest_path)
 
-            # Write the original name to the copy and then set the utime on
-            #  it based on metadata.
+            # Write the metadata to the copy and then set the utime on it
+            #  based on metadata.
             if not constants.dry_run:
-                self.set_original_name_on_copy(media, _file, dest_path)
+                self.write_metadata_to_copy(media, _file, dest_path)
                 self.set_utime_from_metadata(metadata, dest_path)
             else:
                 print(f"[DRY-RUN] Would set utime from metadata for: {dest_path}")
@@ -649,8 +620,9 @@ class FileSystem(object):
 
         return dest_path
 
-    def set_original_name_on_copy(self, media, source, dest_path):
-        """Store the name of the source file in the metadata of its copy.
+    def write_metadata_to_copy(self, media, source, dest_path):
+        """Write changes to the metadata of the source file which were
+        deferred (e.g. import with --location) and its name to its copy.
 
         If the file already had an original name it is kept.
 
@@ -663,13 +635,10 @@ class FileSystem(object):
         if not dest_mode & S_IWUSR:
             os.chmod(dest_path, dest_mode | S_IWUSR)
 
-        media.__class__(dest_path).set_original_name(os.path.basename(source))
+        if not media.write_deferred(dest_path):
+            log.error('Could not write all metadata to %s' % dest_path)
 
-        # exiftool (and Text) keep a copy of the file before writing to it
-        #  which we do not need.
-        dest_original = dest_path + '_original'
-        if os.path.exists(dest_original):
-            os.remove(dest_original)
+        media.__class__(dest_path).set_original_name(os.path.basename(source))
 
     def set_utime_from_metadata(self, metadata, file_path):
         """ Set the modification time on the file based on the file name.

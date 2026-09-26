@@ -244,7 +244,7 @@ class Media(Base):
         if(not self.is_valid()):
             return None
 
-        if self.set_metadata_if_dry_run(album=album):
+        if self.skip_write('set_album', (album,), album=album):
             return True
 
         tags = {self.album_keys[0]: album}
@@ -262,8 +262,8 @@ class Media(Base):
         if(time is None):
             return False
 
-        if self.set_metadata_if_dry_run(
-                date_taken=_gmtime(mktime(time.timetuple()))):
+        if self.skip_write('set_date_taken', (time,),
+                           date_taken=_gmtime(mktime(time.timetuple()))):
             return True
 
         tags = {}
@@ -300,8 +300,8 @@ class Media(Base):
         # The lat/lon _keys array has an order of precedence.
         # The first key is writable and we will give the writable
         #   key precence when reading.
-        if self.set_metadata_if_dry_run(latitude=latitude,
-                                        longitude=longitude):
+        if self.skip_write('set_location', (latitude, longitude),
+                           latitude=latitude, longitude=longitude):
             return True
 
         tags = {
@@ -341,7 +341,8 @@ class Media(Base):
         if not name:
             name = os.path.basename(source)
 
-        if self.set_metadata_if_dry_run(original_name=name):
+        if self.skip_write('set_original_name', (name,),
+                           original_name=name):
             return True
 
         tags = {self.original_name_key: name}
@@ -361,7 +362,7 @@ class Media(Base):
         if(title is None):
             return None
 
-        if self.set_metadata_if_dry_run(title=title):
+        if self.skip_write('set_title', (title,), title=title):
             return True
 
         tags = {self.title_key: title}
@@ -412,10 +413,16 @@ class Media(Base):
         # Files without a date in their metadata use the modification time
         #  as the date taken. We keep it so writing tags does not change it.
         stat_info = os.stat(source)
+        # exiftool keeps the file before writing to it as a backup unless
+        #  one exists already. We remove it only if it was created now.
+        backup = source + '_original'
+        backup_exists = os.path.exists(backup)
 
         status = ''
         status = ExifTool().set_tags(tags,source)
 
         os.utime(source, ns=(stat_info.st_atime_ns, stat_info.st_mtime_ns))
+        if not backup_exists and os.path.exists(backup):
+            os.remove(backup)
 
         return status != ''

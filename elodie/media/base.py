@@ -34,6 +34,7 @@ class Base(object):
 
     def __init__(self, source=None):
         self.source = source
+        self.deferred_writes = None
         self.reset_cache()
 
     def format_metadata(self, **kwargs):
@@ -221,15 +222,41 @@ class Base(object):
             if(key in metadata):
                 self.metadata[key] = kwargs[key]
 
-    def set_metadata_if_dry_run(self, **kwargs):
-        """In dry-run mode update the metadata of this instance instead of
-        writing it to the file. That way the destination of the file is
-        determined as if it had been written.
+    def defer_writes(self):
+        """Record changes to the metadata instead of writing them to the file.
 
-        :params dict kwargs: Named parameters to update.
-        :returns: bool, True if in dry-run mode and nothing should be written.
+        They can be written to another file, e.g. a copy of this one, with
+        write_deferred().
         """
-        if not constants.dry_run:
+        self.deferred_writes = []
+
+    def write_deferred(self, file_path):
+        """Write the changes recorded since defer_writes() to file_path.
+
+        :param str file_path: Path of the file to write the changes to.
+        :returns: bool, True if all changes were written.
+        """
+        media = self.__class__(file_path)
+        status = True
+        for setter, args in self.deferred_writes or []:
+            status = getattr(media, setter)(*args) is True and status
+        return status
+
+    def skip_write(self, setter, args, **kwargs):
+        """Check if a setter should skip writing to the file. This is the case
+        in dry-run mode or after defer_writes().
+
+        The metadata of this instance is updated instead so the destination
+        of the file is determined as if it had been written.
+
+        :param str setter: Name of the setter which is called.
+        :param tuple args: Arguments the setter was called with.
+        :params dict kwargs: Named parameters of the metadata to update.
+        :returns: bool, True if nothing should be written.
+        """
+        if self.deferred_writes is not None:
+            self.deferred_writes.append((setter, args))
+        elif not constants.dry_run:
             return False
 
         self.set_metadata(**kwargs)

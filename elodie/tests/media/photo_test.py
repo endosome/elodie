@@ -375,10 +375,7 @@ def _get_photo_type_file(file_name, date):
     if date is not None:
         return (helper.get_file(file_name), helper.time_convert(date))
 
-    file_path = helper.get_asset(file_name)
-    if file_path is None:
-        pytest.skip('{} could not be downloaded'.format(file_name))
-    return (file_path, helper.get_asset_date_taken(file_name))
+    return (helper.get_asset(file_name), helper.get_asset_date_taken(file_name))
 
 @pytest.mark.parametrize('file_name,date', PHOTO_TYPE_FILES)
 def test_various_types_get(file_name, date):

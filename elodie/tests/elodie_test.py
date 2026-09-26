@@ -805,8 +805,6 @@ def test_import_summary_invalid_file_is_error_not_duplicate():
 def test_import_raw_file(name):
     # gh-507: includes raw files of new cameras which image libraries cannot read
     file_path = helper.get_asset(name)
-    if file_path is None:
-        pytest.skip('{} could not be downloaded'.format(name))
     expected_folder = time.strftime('%Y-%m-%b', helper.get_asset_date_taken(name))
 
     temporary_folder, folder = helper.create_working_folder()

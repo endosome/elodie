@@ -409,8 +409,13 @@ class Media(Base):
             return None
 
         source = self.source
+        # Files without a date in their metadata use the modification time
+        #  as the date taken. We keep it so writing tags does not change it.
+        stat_info = os.stat(source)
 
         status = ''
         status = ExifTool().set_tags(tags,source)
+
+        os.utime(source, ns=(stat_info.st_atime_ns, stat_info.st_mtime_ns))
 
         return status != ''

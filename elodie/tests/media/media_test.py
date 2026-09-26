@@ -344,3 +344,38 @@ def test_set_metadata_dry_run(file_name, media_class, setter, args, key, expecte
     assert checksum_after == checksum_before
     assert folder_contents == [file_name], folder_contents
 
+# Files without a date in their metadata use their modification time as the
+#  date taken. Writing metadata must not change it.
+KEEP_DATE_SETTERS = [
+    ('set_album', ('Test Album',), 'album', 'Test Album'),
+    ('set_location', (11.1111111111, 99.9999999999), 'latitude', 11.1111111111),
+    ('set_original_name', ('original.name',), 'original_name', 'original.name'),
+]
+
+@pytest.mark.parametrize('file_name,media_class,setter,args,key,expected', [
+    ('no-exif.jpg', Photo) + setter for setter in KEEP_DATE_SETTERS + [('set_title', ('Test Title',), 'title', 'Test Title')]
+] + [
+    ('valid-without-header.txt', Text) + setter for setter in KEEP_DATE_SETTERS
+])
+def test_set_metadata_keeps_date_taken_from_modification_time(file_name, media_class, setter, args, key, expected):
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+    os.utime(origin, (1584273600, 1584273600))
+
+    date_taken_before = media_class(origin).get_date_taken()
+    status = getattr(media_class(origin), setter)(*args)
+    media = media_class(origin)
+    value = media.get_metadata()[key]
+    date_taken_after = media.get_date_taken()
+    mtime_after = os.stat(origin).st_mtime
+
+    shutil.rmtree(folder)
+
+    assert status == True, status
+    assert value == expected or helper.isclose(value, expected), value
+    assert date_taken_before == time.gmtime(1584273600), date_taken_before
+    assert date_taken_after == date_taken_before, date_taken_after
+    assert mtime_after == 1584273600, mtime_after
+

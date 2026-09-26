@@ -4,6 +4,7 @@ import unittest.mock as mock
 import os
 import sys
 import shutil
+import time
 
 from click.testing import CliRunner
 import pytest
@@ -464,6 +465,54 @@ def test_import_dry_run_does_not_modify_source(file_name, options):
     assert dry_run_destination is not None, result_dry_run.output
     assert result.exit_code == 0, result.output
     assert dry_run_destination_exists, dry_run_destination
+
+@pytest.mark.parametrize('file_name', ['no-exif.jpg', 'valid-without-header.txt'])
+def test_import_album_from_folder_keeps_date_from_modification_time(file_name):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    source_folder = os.path.join(folder, 'Trip')
+    os.mkdir(source_folder)
+    origin = os.path.join(source_folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+    os.utime(origin, (1584273600, 1584273600))
+
+    dest_path = elodie.import_file(origin, folder_destination, True, False, False)
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    expected_date = time.strftime('%Y-%m-%d_%H-%M-%S', time.gmtime(1584273600))
+    assert os.path.basename(dest_path).startswith(expected_date), dest_path
+    assert '/Trip/' in dest_path, dest_path
+
+@mock.patch('elodie.constants.dry_run', False)
+@pytest.mark.parametrize('file_name', ['no-exif.jpg', 'valid-without-header.txt'])
+def test_update_album_keeps_date_from_modification_time(file_name):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+    os.utime(origin, (1584273600, 1584273600))
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+
+    runner = CliRunner()
+    result = runner.invoke(elodie._update, ['--album', 'Test Album', dest_path])
+    updated_files = [
+        os.path.join(dirname, filename)
+        for dirname, dirnames, filenames in os.walk(folder_destination)
+        for filename in filenames
+    ]
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    expected_date = time.strftime('%Y-%m-%d_%H-%M-%S', time.gmtime(1584273600))
+    assert result.exit_code == 0, result.output
+    assert len(updated_files) == 1, updated_files
+    assert '/Test Album/' in updated_files[0], updated_files
+    assert os.path.basename(updated_files[0]).startswith(expected_date), updated_files
 
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()

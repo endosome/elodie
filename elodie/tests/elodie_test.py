@@ -863,6 +863,33 @@ def test_import_file_tiff_heif_avif(file_name):
     assert dest_path is not None
     assert os.path.join('2020-06-Jun', 'Unknown Location', '2020-06-15_10-30-00-photo') in dest_path, dest_path
 
+@pytest.mark.skipif(helper.is_windows(), reason='Symlinks need extra permissions on Windows')
+def test_import_same_file_through_symlink_does_not_stop_the_run():
+    # gh-210
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+
+    origin = os.path.join(folder, 'plain.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+
+    link = os.path.join(temporary_folder_destination, 'link')
+    os.symlink(folder_destination, link)
+    linked_path = dest_path.replace(folder_destination, link, 1)
+    other = os.path.join(folder, 'with-title.jpg')
+    shutil.copyfile(helper.get_file('with-title.jpg'), other)
+
+    runner = CliRunner()
+    result = runner.invoke(elodie._import, ['--destination', folder_destination, '--allow-duplicates', linked_path, other])
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert 'Final source and destination path should not be identical' in result.output, result.output
+    assert 'Success                        1' in result.output, result.output
+    assert 'Error                          1' in result.output, result.output
+
 def test_import_destination_in_source():
     temporary_folder, folder = helper.create_working_folder()
     folder_destination = '{}/destination'.format(folder)

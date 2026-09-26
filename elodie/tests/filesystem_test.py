@@ -182,6 +182,81 @@ def test_get_all_files_for_loop():
 
     assert counter == 5, counter
 
+@pytest.mark.skipif(helper.is_windows(), reason='Symlinks need extra permissions on Windows')
+@pytest.mark.parametrize('kind,expected', [
+    ('same path', True),
+    ('relative path', True),
+    ('symlink', True),
+    ('hard link', True),
+    ('other file', False),
+    ('does not exist', False),
+])
+def test_is_same_file(kind, expected):
+    # gh-210
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    path = os.path.join(folder, 'photo.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), path)
+
+    if kind == 'same path':
+        other_path = path
+    elif kind == 'relative path':
+        other_path = os.path.relpath(path)
+    elif kind == 'symlink':
+        os.symlink(folder, os.path.join(temporary_folder, 'link'))
+        other_path = os.path.join(temporary_folder, 'link', 'photo.jpg')
+    elif kind == 'hard link':
+        other_path = os.path.join(folder, 'hardlink.jpg')
+        os.link(path, other_path)
+    elif kind == 'other file':
+        other_path = os.path.join(folder, 'other.jpg')
+        shutil.copyfile(path, other_path)
+    else:
+        other_path = os.path.join(folder, 'missing.jpg')
+
+    result = filesystem.is_same_file(path, other_path)
+
+    shutil.rmtree(temporary_folder)
+
+    assert result == expected, (kind, result)
+
+def test_is_same_file_with_case_insensitive_paths():
+    # On Windows os.path.normcase lowercases paths
+    filesystem = FileSystem()
+    path = os.path.join(gettempdir(), 'Library', 'Photo.JPG')
+    other_path = os.path.join(gettempdir(), 'library', 'photo.jpg')
+
+    same_on_linux = filesystem.is_same_file(path, other_path)
+    with mock.patch('elodie.filesystem.os.path.normcase', side_effect=lambda p: p.lower()):
+        same_on_windows = filesystem.is_same_file(path, other_path)
+
+    assert same_on_linux == False
+    assert same_on_windows == True
+
+@pytest.mark.skipif(helper.is_windows(), reason='Symlinks need extra permissions on Windows')
+def test_process_file_same_file_through_symlink():
+    # Copying a file onto itself raised shutil.SameFileError. gh-210
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+
+    origin = os.path.join(folder, 'photo.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+    dest_path = filesystem.process_file(origin, library, Photo(origin), allowDuplicate=True)
+    checksum = helper.checksum(dest_path)
+
+    os.symlink(library, os.path.join(temporary_folder, 'link'))
+    linked_path = dest_path.replace(library, os.path.join(temporary_folder, 'link'), 1)
+    result = filesystem.process_file(linked_path, library, Photo(linked_path), allowDuplicate=True)
+    checksum_after = helper.checksum(dest_path)
+    library_files = [f for _, _, fs in os.walk(library) for f in fs]
+
+    shutil.rmtree(temporary_folder)
+
+    assert result is None, result
+    assert checksum_after == checksum
+    assert len(library_files) == 1, library_files
+
 def test_get_current_directory():
     filesystem = FileSystem()
     assert os.getcwd() == filesystem.get_current_directory()

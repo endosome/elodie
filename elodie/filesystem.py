@@ -139,6 +139,26 @@ class FileSystem(object):
                     ):
                     yield filename_path
 
+    def is_same_file(self, path, other_path):
+        """Check if two paths are the same file, also if they are written
+        differently: relative, through a symlink, as a hard link or with
+        different case on a case-insensitive file system (Windows, macOS).
+
+        :param str path: Path of a file.
+        :param str other_path: Path of a file, which may not exist.
+        :returns: bool
+        """
+        if os.path.exists(path) and os.path.exists(other_path):
+            try:
+                return os.path.samefile(path, other_path)
+            except OSError:
+                pass
+
+        return (
+            os.path.normcase(os.path.abspath(path)) ==
+            os.path.normcase(os.path.abspath(other_path))
+        )
+
     def get_current_directory(self):
         """Get the current working directory.
 
@@ -660,7 +680,7 @@ class FileSystem(object):
 
         # If source and destination are identical then
         #  we should not write the file. gh-210
-        if(_file == dest_path):
+        if self.is_same_file(_file, dest_path):
             print('Final source and destination path should not be identical')
             return
 

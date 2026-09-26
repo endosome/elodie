@@ -1,6 +1,6 @@
 # Google Photos Plugin for Elodie
 
-[![Build Status](https://travis-ci.org/jmathai/elodie.svg?branch=master)](https://travis-ci.org/jmathai/elodie) [![Coverage Status](https://coveralls.io/repos/github/jmathai/elodie/badge.svg?branch=master)](https://coveralls.io/github/jmathai/elodie?branch=master) [![Scrutinizer Code Quality](https://scrutinizer-ci.com/g/jmathai/elodie/badges/quality-score.png?b=master)](https://scrutinizer-ci.com/g/jmathai/elodie/?branch=master)
+[![CI](https://github.com/endosome/elodie/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/endosome/elodie/actions/workflows/ci.yml) [![Coverage Status](https://coveralls.io/repos/github/endosome/elodie/badge.svg?branch=main)](https://coveralls.io/github/endosome/elodie?branch=main) [![Scrutinizer Code Quality](https://scrutinizer-ci.com/g/jmathai/elodie/badges/quality-score.png?b=master)](https://scrutinizer-ci.com/g/jmathai/elodie/?branch=master)
 
 This plugin uploads all photos imported using Elodie to Google Photos. It was created after [Google Photos and Google Drive synchronization was deprecated](https://www.blog.google/products/photos/simplifying-google-photos-and-google-drive/). It aims to replicate my [workflow using Google Photos, Google Drive and Elodie](https://medium.com/swlh/my-automated-photo-workflow-using-google-photos-and-elodie-afb753b8c724).
 

@@ -159,6 +159,12 @@ def test_get_camera_model_not_set():
 
     assert model is None, model
 
+def test_get_title_when_exif_value_is_int():
+    photo = Photo(helper.get_file('metadata-can-be-int.jpg'))
+    title = photo.get_title()
+
+    assert title == '854304532', title
+
 def test_is_valid():
     photo = Photo(helper.get_file('with-location.jpg'))
 

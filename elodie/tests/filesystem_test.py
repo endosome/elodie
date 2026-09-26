@@ -740,6 +740,21 @@ def test_process_file_with_title():
     assert origin_checksum_preprocess == origin_checksum
     assert helper.path_tz_fix(os.path.join('2015-12-Dec','Unknown Location','2015-12-05_00-59-26-photo-some-title.jpg')) in destination, destination
 
+def test_process_file_with_int_title():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+
+    origin = '%s/photo.jpg' % folder
+    shutil.copyfile(helper.get_file('metadata-can-be-int.jpg'), origin)
+
+    media = Photo(origin)
+    destination = filesystem.process_file(origin, temporary_folder, media, allowDuplicate=True)
+
+    shutil.rmtree(folder)
+    shutil.rmtree(os.path.dirname(os.path.dirname(destination)))
+
+    assert helper.path_tz_fix(os.path.join('2016-11-Nov','Unknown Location','2016-11-24_14-59-31-photo-854304532.jpg')) in destination, destination
+
 def test_process_file_with_location():
     filesystem = FileSystem()
     temporary_folder, folder = helper.create_working_folder()

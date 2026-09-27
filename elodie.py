@@ -3,6 +3,7 @@
 import os
 import re
 import sys
+import traceback
 from datetime import datetime
 
 import click
@@ -31,26 +32,29 @@ from elodie.plugins.plugins import Plugins
 from elodie.result import Result
 from elodie.external.pyexiftool import ExifTool
 from elodie.dependencies import get_exiftool
-from elodie import constants
 
 FILESYSTEM = FileSystem()
 
+TIME_FORMATS = ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d')
+
+
 def import_file(_file, destination, album_from_folder, trash, allow_duplicates, location=None, time=None):
+    """Set file metadata and move it to destination.
+    """
     FILESYSTEM.skipped_as_duplicate = False
     FILESYSTEM.imported_sidecars = []
 
     _file = _decode(_file)
     destination = _decode(destination)
 
-    """Set file metadata and move it to destination.
-    """
     if not os.path.exists(_file):
         log.warn('Could not find %s' % _file)
         log.all('{"source":"%s", "error_msg":"Could not find %s"}' %
                   (_file, _file))
         return
-    # Check if the source, _file, is a child folder within destination
-    elif destination.startswith(os.path.abspath(os.path.dirname(_file))+os.sep):
+    # A file in the library, i.e. when the source contains the destination,
+    #  is not imported into it again.
+    elif is_in_directory(_file, destination):
         log.all('{"source": "%s", "destination": "%s", "error_msg": "Source cannot be in destination"}' % (
             _file, destination))
         return
@@ -70,10 +74,10 @@ def import_file(_file, destination, album_from_folder, trash, allow_duplicates, 
         media.set_album_from_folder()
 
     # Apply location and time updates if provided
-    if location:
-        update_location(media, _file, location)
-    if time:
-        update_time(media, _file, time)
+    if location and not update_location(media, _file, location):
+        return
+    if time and not update_time(media, _file, time):
+        return
 
     dest_path = FILESYSTEM.process_file(_file, destination,
         media, allowDuplicate=allow_duplicates, move=False)
@@ -106,6 +110,69 @@ def import_file(_file, destination, album_from_folder, trash, allow_duplicates, 
                 FILESYSTEM.update_directory_listing(sidecar, False, modified)
 
     return dest_path or None
+
+
+def is_in_directory(path, directory):
+    """Check if path is inside directory, in any of its subfolders.
+    """
+    path = os.path.realpath(path)
+    directory = os.path.realpath(directory)
+    try:
+        return (path != directory and
+                os.path.commonpath([path, directory]) == directory)
+    except ValueError:
+        # On different drives on Windows
+        return False
+
+
+def report_exception(_file, exception):
+    """Report an unexpected error for one file so the others can still
+    be processed. The traceback is shown with --debug.
+    """
+    log.error('Could not process %s: %s: %s' % (
+        _file, type(exception).__name__, exception))
+    log.info(traceback.format_exc())
+
+
+def parse_time(time_string):
+    """Parse the value of --time.
+
+    :returns: datetime or None if it is not in a supported format
+    """
+    for time_format in TIME_FORMATS:
+        try:
+            return datetime.strptime(time_string, time_format)
+        except ValueError:
+            pass
+    return None
+
+
+def validate_time(context, parameter, value):
+    if value is not None and parse_time(value) is None:
+        raise click.BadParameter(
+            'Use YYYY-mm-dd hh:ii:ss or YYYY-mm-dd, not %s' % value)
+    return value
+
+
+def check_location(location_name):
+    """Exit before any file is changed if the location of --location
+    cannot be found, it would fail for every file.
+    """
+    if location_name and get_coordinates(location_name) is None:
+        log.error('Could not find the location %s' % location_name)
+        sys.exit(1)
+
+
+def get_coordinates(location_name):
+    """Coordinates of a place.
+
+    :returns: tuple(float) or None if it could not be found
+    """
+    coordinates = geolocation.coordinates_by_name(location_name)
+    if (not coordinates or coordinates.get('latitude') is None or
+            coordinates.get('longitude') is None):
+        return None
+    return (coordinates['latitude'], coordinates['longitude'])
 
 
 def is_imported(_file):
@@ -151,8 +218,9 @@ def _batch(debug, dry_run):
 @click.option('--location', help=('Update the image location. Location '
                                   'should be the name of a place, like "Las '
                                   'Vegas, NV".'))
-@click.option('--time', help=('Update the image time. Time should be in '
-                              'YYYY-mm-dd hh:ii:ss or YYYY-mm-dd format.'))
+@click.option('--time', callback=validate_time,
+              help=('Update the image time. Time should be in '
+                    'YYYY-mm-dd hh:ii:ss or YYYY-mm-dd format.'))
 @click.option('--debug', default=False, is_flag=True,
               help='Show more verbose debug output.')
 @click.option('--dry-run', default=False, is_flag=True,
@@ -190,21 +258,36 @@ def _import(destination, source, file, album_from_folder, trash, allow_duplicate
     for path in paths:
         path = os.path.expanduser(path)
         if os.path.isdir(path):
-            files.update(FILESYSTEM.get_all_files(path, None, exclude_regex_list))
+            # Files which are in the library already, i.e. when the source
+            #  contains the destination, are skipped.
+            files.update(
+                f for f in FILESYSTEM.get_all_files(
+                    path, None, exclude_regex_list)
+                if not is_in_directory(f, destination))
         else:
             if not FILESYSTEM.should_exclude(path, exclude_regex_list, True):
                 files.add(path)
 
+    if files:
+        check_location(location)
+
     for current_file in files:
-        dest_path = import_file(current_file, destination, album_from_folder,
-                    trash, allow_duplicates, location, time)
+        try:
+            dest_path = import_file(current_file, destination,
+                                    album_from_folder, trash,
+                                    allow_duplicates, location, time)
+        except Exception as e:
+            report_exception(current_file, e)
+            dest_path = None
+            FILESYSTEM.skipped_as_duplicate = False
         if dest_path:
-            result.append((current_file, True))
+            status = True
         elif FILESYSTEM.skipped_as_duplicate:
-            result.append((current_file, None))  # duplicate
+            status = None  # duplicate, it is in the library already
         else:
-            result.append((current_file, False))  # error
-        has_errors = has_errors is True or not dest_path
+            status = False  # error
+        result.append((current_file, status))
+        has_errors = has_errors or status is False
 
     result.write()
 
@@ -281,35 +364,37 @@ def _verify(debug):
 
 def update_location(media, file_path, location_name):
     """Update location exif metadata of media.
-    """
-    location_coords = geolocation.coordinates_by_name(location_name)
 
-    if location_coords and 'latitude' in location_coords and \
-            'longitude' in location_coords:
-        location_status = media.set_location(location_coords[
-            'latitude'], location_coords['longitude'])
-        if not location_status:
-            log.error('Failed to update location')
-            log.all(('{"source":"%s",' % file_path,
-                       '"error_msg":"Failed to update location"}'))
-            sys.exit(1)
+    :returns: bool
+    """
+    coordinates = get_coordinates(location_name)
+    if coordinates is None:
+        log.error('Could not find the location %s' % location_name)
+        return False
+
+    if not media.set_location(*coordinates):
+        log.error('Failed to update location of %s' % file_path)
+        log.all('{"source":"%s", "error_msg":"Failed to update location"}' %
+                file_path)
+        return False
     return True
 
 
 def update_time(media, file_path, time_string):
     """Update time exif metadata of media.
+
+    :returns: bool
     """
-    time_format = '%Y-%m-%d %H:%M:%S'
-    if re.match(r'^\d{4}-\d{2}-\d{2}$', time_string):
-        time_string = '%s 00:00:00' % time_string
-    elif re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}\d{2}$', time_string):
+    time = parse_time(time_string)
+    if time is None:
         msg = ('Invalid time format. Use YYYY-mm-dd hh:ii:ss or YYYY-mm-dd')
         log.error(msg)
         log.all('{"source":"%s", "error_msg":"%s"}' % (file_path, msg))
-        sys.exit(1)
+        return False
 
-    time = datetime.strptime(time_string, time_format)
-    media.set_date_taken(time)
+    if not media.set_date_taken(time):
+        log.error('Failed to update time of %s' % file_path)
+        return False
     return True
 
 
@@ -343,13 +428,95 @@ def get_library_directory(media, file_path):
     return os.sep.join(parts[:-depth]) or os.sep
 
 
+def update_file(current_file, album, location, time, title):
+    """Update the metadata of a file and move it to its folder in the
+    library.
+
+    :returns: bool
+    """
+    if not os.path.exists(current_file):
+        log.warn('Could not find %s' % current_file)
+        log.all('{"source":"%s", "error_msg":"Could not find %s"}' %
+                  (current_file, current_file))
+        return False
+
+    media = Media.get_class_by_file(current_file, get_all_subclasses())
+    if not media:
+        log.warn('Not a supported file (%s)' % current_file)
+        log.all('{"source":"%s", "error_msg":"Not a supported file"}' %
+                current_file)
+        return False
+
+    # The library is found from the folders of the metadata before the
+    #  update.
+    destination = get_library_directory(media, current_file)
+
+    if location and not update_location(media, current_file, location):
+        return False
+    if time and not update_time(media, current_file, time):
+        return False
+    if album and not media.set_album(album):
+        log.error('Failed to update album of %s' % current_file)
+        return False
+
+    # Updating a title can be problematic when doing it 2+ times on a file.
+    # You would end up with img_001.jpg -> img_001-first-title.jpg ->
+    # img_001-first-title-second-title.jpg.
+    # To resolve that we have to track the prior title (if there was one.
+    # Then we massage the updated_media's metadata['base_name'] to remove
+    # the old title.
+    # Since FileSystem.get_file_name() relies on base_name it will properly
+    #  rename the file by updating the title instead of appending it.
+    remove_old_title_from_name = False
+    if title:
+        # We call get_metadata() to cache it before making any changes
+        metadata = media.get_metadata()
+        original_title = metadata['title']
+        if not media.set_title(title):
+            log.error('Failed to update title of %s' % current_file)
+            return False
+        if original_title:
+            # @TODO: We should move this to a shared method since
+            # FileSystem.get_file_name() does it too.
+            original_title = re.sub(r'\W+', '-', original_title.lower())
+            original_base_name = metadata['base_name']
+            remove_old_title_from_name = True
+
+    if constants.dry_run:
+        # Nothing was written to the file so we use the metadata
+        #  which was updated in memory.
+        updated_media = media
+    else:
+        updated_media = Media.get_class_by_file(current_file,
+                                                get_all_subclasses())
+    # See comments above on why we have to do this when titles
+    # get updated.
+    if remove_old_title_from_name and len(original_title) > 0:
+        updated_media.get_metadata()
+        updated_media.set_metadata_basename(
+            original_base_name.replace('-%s' % original_title, ''))
+
+    dest_path = FILESYSTEM.process_file(current_file, destination,
+        updated_media, move=True, allowDuplicate=True)
+    log.info(u'%s -> %s' % (current_file, dest_path))
+    log.all('{"source":"%s", "destination":"%s"}' % (current_file,
+                                                       dest_path))
+    # If the folder we moved the file out of or its parent are empty
+    # we delete it.
+    FILESYSTEM.delete_directory_if_empty(os.path.dirname(current_file))
+    FILESYSTEM.delete_directory_if_empty(
+        os.path.dirname(os.path.dirname(current_file)))
+    return bool(dest_path)
+
+
 @click.command('update')
 @click.option('--album', help='Update the image album.')
 @click.option('--location', help=('Update the image location. Location '
                                   'should be the name of a place, like "Las '
                                   'Vegas, NV".'))
-@click.option('--time', help=('Update the image time. Time should be in '
-                              'YYYY-mm-dd hh:ii:ss or YYYY-mm-dd format.'))
+@click.option('--time', callback=validate_time,
+              help=('Update the image time. Time should be in '
+                    'YYYY-mm-dd hh:ii:ss or YYYY-mm-dd format.'))
 @click.option('--title', help='Update the image title.')
 @click.option('--debug', default=False, is_flag=True,
               help='Show more verbose debug output.')
@@ -362,6 +529,10 @@ def _update(album, location, time, title, paths, debug, dry_run):
     """
     constants.debug = debug
     constants.dry_run = dry_run
+    if not (album or location or time or title):
+        raise click.UsageError(
+            'Nothing to update, use --album, --location, --time or --title.')
+
     has_errors = False
     result = Result()
 
@@ -373,90 +544,19 @@ def _update(album, location, time, title, paths, debug, dry_run):
         else:
             files.add(path)
 
+    check_location(location)
+
     for current_file in files:
-        if not os.path.exists(current_file):
-            has_errors = True
-            result.append((current_file, False))
-            log.warn('Could not find %s' % current_file)
-            log.all('{"source":"%s", "error_msg":"Could not find %s"}' %
-                      (current_file, current_file))
-            continue
-
-        media = Media.get_class_by_file(current_file, get_all_subclasses())
-        if not media:
-            continue
-
-        # The library is found from the folders of the metadata before the
-        #  update.
-        destination = get_library_directory(media, current_file)
-
-        updated = False
-        if location:
-            update_location(media, current_file, location)
-            updated = True
-        if time:
-            update_time(media, current_file, time)
-            updated = True
-        if album:
-            media.set_album(album)
-            updated = True
-
-        # Updating a title can be problematic when doing it 2+ times on a file.
-        # You would end up with img_001.jpg -> img_001-first-title.jpg ->
-        # img_001-first-title-second-title.jpg.
-        # To resolve that we have to track the prior title (if there was one.
-        # Then we massage the updated_media's metadata['base_name'] to remove
-        # the old title.
-        # Since FileSystem.get_file_name() relies on base_name it will properly
-        #  rename the file by updating the title instead of appending it.
-        remove_old_title_from_name = False
-        if title:
-            # We call get_metadata() to cache it before making any changes
-            metadata = media.get_metadata()
-            original_title = metadata['title']
-            title_update_status = media.set_title(title)
-            if title_update_status and original_title:
-                # @TODO: We should move this to a shared method since
-                # FileSystem.get_file_name() does it too.
-                original_title = re.sub(r'\W+', '-', original_title.lower())
-                original_base_name = metadata['base_name']
-                remove_old_title_from_name = True
-            updated = True
-
-        if updated:
-            if constants.dry_run:
-                # Nothing was written to the file so we use the metadata
-                #  which was updated in memory.
-                updated_media = media
-            else:
-                updated_media = Media.get_class_by_file(current_file,
-                                                        get_all_subclasses())
-            # See comments above on why we have to do this when titles
-            # get updated.
-            if remove_old_title_from_name and len(original_title) > 0:
-                updated_media.get_metadata()
-                updated_media.set_metadata_basename(
-                    original_base_name.replace('-%s' % original_title, ''))
-
-            dest_path = FILESYSTEM.process_file(current_file, destination,
-                updated_media, move=True, allowDuplicate=True)
-            log.info(u'%s -> %s' % (current_file, dest_path))
-            log.all('{"source":"%s", "destination":"%s"}' % (current_file,
-                                                               dest_path))
-            # If the folder we moved the file out of or its parent are empty
-            # we delete it.
-            FILESYSTEM.delete_directory_if_empty(os.path.dirname(current_file))
-            FILESYSTEM.delete_directory_if_empty(
-                os.path.dirname(os.path.dirname(current_file)))
-            result.append((current_file, bool(dest_path)))
-            # Trip has_errors to False if it's already False or dest_path is.
-            has_errors = has_errors is True or not dest_path
-        else:
-            has_errors = False
-            result.append((current_file, False))
+        try:
+            status = update_file(current_file, album, location, time, title)
+        except Exception as e:
+            report_exception(current_file, e)
+            status = False
+        result.append((current_file, status))
+        has_errors = has_errors or not status
 
     result.write()
-    
+
     if has_errors:
         sys.exit(1)
 

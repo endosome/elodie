@@ -233,6 +233,8 @@ Options:
 
 `verify` exits with 1 if a file is missing or changed. Files imported with an earlier version of elodie are reported as changed since only the checksum of their source was stored; `generate-db` stores the checksums of the files in the library instead, but then a source which was imported before is no longer recognized as a duplicate.
 
+`import`, `update` and `verify` exit with 1 if a file could not be processed, an error for one file does not stop the others. Files which were imported before (duplicates) are no error. Files in the destination are not imported into it again, so the source can contain the destination.
+
 ### Excluding folders and files from being imported
 
 If you have specific folders or files which you would like to prevent from being imported you can provide regular expressions which will be used to match and skip files from being imported.

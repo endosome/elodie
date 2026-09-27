@@ -159,6 +159,8 @@ class Base(object):
         :returns: bool
         """
         source = self.source
+        if not source:
+            return False
         return os.path.splitext(source)[1][1:].lower() in self.extensions
 
     def reset_cache(self):

@@ -302,10 +302,10 @@ def test_set_rating_remove_with_empty_string():
 
     assert metadata['rating'] is None, metadata['rating']
 
-def is_valid():
-    media = Media()
-
-    assert not media.is_valid()
+def test_is_valid_without_a_file():
+    # i.e. Video() to use its helpers
+    assert Media().is_valid() is False
+    assert Photo().is_valid() is False
 
 DRY_RUN_SETTERS = [
     ('set_album', ('Test Album',), 'album', 'Test Album'),
@@ -448,3 +448,87 @@ def test_defer_writes(file_name, media_class):
     assert album_in_copy == 'Test Album', album_in_copy
     assert album_in_source != 'Test Album', album_in_source
 
+@pytest.mark.parametrize('from_location,to_location', [
+    # The reference of the hemisphere of the earlier location must not stay
+    ((-33.8688, 151.2093), (40.7128, -74.006)),   # Sydney -> New York
+    ((40.7128, -74.006), (48.8566, 2.3522)),      # New York -> Paris
+    ((48.8566, 2.3522), (-33.8688, 151.2093)),    # Paris -> Sydney
+])
+def test_set_location_to_another_hemisphere(from_location, to_location):
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'photo.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+    Photo(origin).set_location(*from_location)
+
+    status = Photo(origin).set_location(*to_location)
+    photo = Photo(origin)
+    location = (photo.get_coordinate('latitude'), photo.get_coordinate('longitude'))
+
+    shutil.rmtree(temporary_folder)
+
+    assert status is True
+    assert helper.isclose(location[0], to_location[0]) and helper.isclose(location[1], to_location[1]), location
+
+@pytest.mark.parametrize('file_name,media_class', [
+    ('video.mkv', Video),
+    ('video.webm', Video),
+])
+def test_setters_report_files_which_cannot_be_written(file_name, media_class):
+    # ExifTool cannot write Matroska files, the setters must not report
+    #  success
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+    media = media_class(origin)
+
+    results = [media.set_album('Trip'), media.set_rating(5), media.set_title('Title'),
+               media.set_location(11.1, 99.9), media.set_original_name('a.mkv')]
+
+    shutil.rmtree(temporary_folder)
+
+    assert results == [False] * 5, results
+
+@pytest.mark.parametrize('output,expected', [
+    (b'1 image files updated\n', True),
+    # i.e. removing a tag which is not set
+    (b'0 image files updated\n    1 image files unchanged\n', True),
+    (b"0 image files updated\n    1 files weren't updated due to errors\n", False),
+    (b'', False),
+])
+def test_write_succeeded(output, expected):
+    assert Media._write_succeeded(output) is expected
+
+@mock.patch('elodie.constants.dry_run', True)
+@pytest.mark.parametrize('setter,args,key,expected', [
+    ('set_rating', (3,), 'rating', 3),
+    ('set_rating', ('',), 'rating', None),
+    ('set_description', ('A description',), 'description', 'A description'),
+])
+def test_set_rating_and_description_dry_run(setter, args, key, expected):
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'photo.jpg')
+    shutil.copyfile(helper.get_file('with-rating.jpg'), origin)
+    checksum_before = helper.checksum(origin)
+    media = Photo(origin)
+
+    status = getattr(media, setter)(*args)
+    checksum_after = helper.checksum(origin)
+
+    shutil.rmtree(temporary_folder)
+
+    assert status is True
+    assert checksum_after == checksum_before
+    assert media.get_metadata()[key] == expected
+
+def test_get_description_which_is_a_number():
+    # ExifTool returns numbers for descriptions like "2019"
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'photo.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+    Photo(origin).set_description('2019')
+
+    description = Photo(origin).get_description()
+
+    shutil.rmtree(temporary_folder)
+
+    assert description == '2019', repr(description)

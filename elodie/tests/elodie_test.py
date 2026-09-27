@@ -2032,3 +2032,323 @@ def test_ctrl_c_stops_an_import():
     assert process.returncode == 1, (process.returncode, output)
     assert 'Aborted!' in output, output
     assert 'Traceback' not in output, output
+
+# gh-474: the video of an Apple Live Photo is imported next to its photo with
+#  the same name.
+def _files_in(folder):
+    return sorted(
+        os.path.relpath(os.path.join(dirname, name), folder)
+        for dirname, dirnames, names in os.walk(folder)
+        for name in names
+    )
+
+def _set_video_date(video, date):
+    # The video follows its photo whatever its own metadata says
+    ExifTool().execute(
+        b'-overwrite_original',
+        ('-QuickTime:CreationDate=%s' % date).encode(),
+        video.encode(),
+    )
+
+def test_import_live_photo():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    photo, video = helper.create_live_photo(folder)
+    _set_video_date(video, '2018:01:01 12:00:00+02:00')
+    # Same name as a Live Photo but the video belongs to another photo, which
+    #  was taken a day later.
+    other_photo, other_video = helper.create_live_photo(folder, name='IMG_5555', content_identifier='SOMETHING-ELSE')
+    ExifTool().execute(b'-overwrite_original', b'-EXIF:DateTimeOriginal=2019:05:27 11:00:00', other_photo.encode())
+
+    runner = CliRunner()
+    result = runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    library = _files_in(folder_destination)
+    source = sorted(os.listdir(folder))
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert 'Success                        4' in result.output, result.output
+    # The video goes next to the photo although its own location differs
+    pair = [f for f in library if 'img_1234' in f]
+    assert [os.path.splitext(f)[1] for f in pair] == ['.heic', '.mov'], library
+    assert os.path.splitext(pair[0])[0] == os.path.splitext(pair[1])[0], library
+    # The other video is imported on its own with its own date
+    other = sorted(os.path.basename(f) for f in library if 'img_5555' in f)
+    assert other == ['2019-05-26_10-33-20-img_5555.mov', '2019-05-27_11-00-00-img_5555.heic'], library
+    assert source == ['IMG_1234.HEIC', 'IMG_1234.MOV', 'IMG_5555.HEIC', 'IMG_5555.MOV'], source
+
+@mock.patch.object(elodie, 'send2trash')
+def test_import_live_photo_send_to_trash(mock_send2trash):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    photo, video = helper.create_live_photo(folder)
+    _set_video_date(video, '2018:01:01 12:00:00+02:00')
+    with open(os.path.join(folder, 'IMG_1234.AAE'), 'w') as f:
+        f.write('edits')
+    trashed = []
+
+    def trash(path):
+        trashed.append(os.path.basename(path))
+        os.remove(path)
+    mock_send2trash.side_effect = trash
+
+    runner = CliRunner()
+    result = runner.invoke(elodie._import, ['--destination', folder_destination, '--trash', folder])
+    library = _files_in(folder_destination)
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert sorted(trashed) == ['IMG_1234.AAE', 'IMG_1234.HEIC', 'IMG_1234.MOV'], trashed
+    # The photo is trashed before its video
+    assert trashed.index('IMG_1234.HEIC') < trashed.index('IMG_1234.MOV'), trashed
+    assert [os.path.splitext(f)[1] for f in library] == ['.aae', '.heic', '.mov'], library
+    assert len(set(os.path.splitext(f)[0] for f in library)) == 1, library
+
+def test_import_live_photo_video_next_to_photo_imported_before():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    photo, video = helper.create_live_photo(folder)
+    _set_video_date(video, '2018:01:01 12:00:00+02:00')
+    # Import the photo without its video first
+    only_photo_folder = os.path.join(temporary_folder, 'only-photo')
+    os.makedirs(only_photo_folder)
+    shutil.copyfile(photo, os.path.join(only_photo_folder, 'IMG_1234.HEIC'))
+
+    runner = CliRunner()
+    runner.invoke(elodie._import, ['--destination', folder_destination, only_photo_folder])
+    result = runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    library = _files_in(folder_destination)
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert 'Success                        1' in result.output, result.output
+    assert 'Duplicate, not imported        1' in result.output, result.output
+    assert [os.path.splitext(f)[1] for f in library] == ['.heic', '.mov'], library
+    assert os.path.splitext(library[0])[0] == os.path.splitext(library[1])[0], library
+
+def test_import_live_photo_video_on_its_own_when_photo_is_not_imported():
+    # The video must not be lost when its photo is excluded
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    helper.create_live_photo(folder)
+
+    runner = CliRunner()
+    result = runner.invoke(elodie._import, ['--destination', folder_destination, '--exclude-regex', r'\.HEIC$', folder])
+    library = _files_in(folder_destination)
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert [os.path.splitext(f)[1] for f in library] == ['.mov'], library
+
+@mock.patch('elodie.constants.dry_run', True)
+def test_import_live_photo_dry_run():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    helper.create_live_photo(folder)
+
+    runner = CliRunner()
+    result = runner.invoke(elodie._import, ['--destination', folder_destination, '--dry-run', folder])
+    library = _files_in(folder_destination)
+    source = sorted(os.listdir(folder))
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert library == [], library
+    assert source == ['IMG_1234.HEIC', 'IMG_1234.MOV'], source
+    assert 'Would copy' in result.output and 'IMG_1234.MOV' in result.output, result.output
+
+def test_update_live_photo_moves_video_with_photo():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    helper.create_live_photo(folder)
+    runner = CliRunner()
+    runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    photo_dest = [
+        os.path.join(folder_destination, f)
+        for f in _files_in(folder_destination) if f.endswith('.heic')
+    ][0]
+
+    # Only the photo is given
+    result = runner.invoke(elodie._update, ['--album', 'Holidays', '--title', 'Beach', photo_dest])
+    library = _files_in(folder_destination)
+    video_album = None
+    if len(library) == 2:
+        video_album = Video(os.path.join(folder_destination, library[1])).get_metadata()['album']
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert len(library) == 2, library
+    assert all('/Holidays/' in f and f.endswith(('-beach.heic', '-beach.mov')) for f in library), library
+    assert os.path.splitext(library[0])[0] == os.path.splitext(library[1])[0], library
+    assert video_album == 'Holidays', video_album
+
+def test_sort_photos_first():
+    files = {'b/IMG_1.MOV', 'a/IMG_2.mp4', 'b/IMG_1.HEIC', 'a/notes.txt'}
+    assert elodie.sort_photos_first(files) == ['a/notes.txt', 'b/IMG_1.HEIC', 'a/IMG_2.mp4', 'b/IMG_1.MOV']
+
+def test_import_live_photo_video_shared_by_two_photos():
+    # i.e. the original and a copy of the photo, both with the
+    #  ContentIdentifier of the video
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    photo, video = helper.create_live_photo(folder)
+    copy = os.path.join(folder, 'IMG_1234.HEIF')
+    shutil.copyfile(photo, copy)
+    # Not identical, otherwise it is a duplicate
+    ExifTool().execute(b'-overwrite_original', b'-EXIF:DateTimeOriginal=2019:05:26 10:33:21', copy.encode())
+    has_content_identifier = elodie.FILESYSTEM.get_content_identifier(Photo(copy)) == helper.LIVE_PHOTO_CONTENT_IDENTIFIER
+
+    runner = CliRunner()
+    result = runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    library = _files_in(folder_destination)
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert has_content_identifier
+    assert result.exit_code == 0, result.output
+    assert 'Success                        3' in result.output, result.output
+    # The video is imported once, with the first photo
+    assert sorted(os.path.splitext(f)[1] for f in library) == ['.heic', '.heif', '.mov'], library
+
+
+def test_import_live_photo_again_is_duplicate():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    helper.create_live_photo(folder)
+
+    runner = CliRunner()
+    runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    library_before = _files_in(folder_destination)
+    result = runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    library_after = _files_in(folder_destination)
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert 'Duplicate, not imported        2' in result.output, result.output
+    assert 'Success                        0' in result.output, result.output
+    assert library_after == library_before, library_after
+
+@mock.patch('elodie.constants.dry_run', False)
+def test_update_live_photo_dry_run():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    helper.create_live_photo(folder)
+    runner = CliRunner()
+    runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    library_before = _files_in(folder_destination)
+    photo_dest = os.path.join(folder_destination, [f for f in library_before if f.endswith('.heic')][0])
+
+    result = runner.invoke(elodie._update, ['--album', 'Holidays', '--dry-run', photo_dest])
+    library_after = _files_in(folder_destination)
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert library_after == library_before, library_after
+    assert 'Holidays' in result.output and '.mov' in result.output, result.output
+
+def _fail_for(extension, function):
+    # Fails for the files with this extension, calls function for others
+    def side_effect(_file, *args, **kwargs):
+        if _file.upper().endswith(extension):
+            return None
+        return function(_file, *args, **kwargs)
+    return side_effect
+
+@mock.patch.object(elodie, 'send2trash')
+def test_import_live_photo_keeps_video_with_photo_which_is_not_imported(mock_send2trash):
+    # The pair stays in the source so it is imported together the next time,
+    #  also with --trash
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    helper.create_live_photo(folder)
+
+    with mock.patch.object(elodie.FILESYSTEM, 'process_file',
+                           side_effect=_fail_for('.HEIC', elodie.FILESYSTEM.process_file)):
+        result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, '--trash', folder])
+    library = _files_in(folder_destination)
+    source = sorted(os.listdir(folder))
+
+    assert result.exit_code == 1, result.output
+    assert 'Error                          2' in result.output, result.output
+    assert 'since its photo' in result.output, result.output
+    assert library == [], library
+    assert source == ['IMG_1234.HEIC', 'IMG_1234.MOV'], source
+    mock_send2trash.assert_not_called()
+
+@mock.patch.object(elodie, 'send2trash')
+def test_import_live_photo_keeps_photo_when_video_is_not_imported(mock_send2trash):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    helper.create_live_photo(folder)
+
+    with mock.patch.object(elodie.FILESYSTEM, 'process_file',
+                           side_effect=_fail_for('.MOV', elodie.FILESYSTEM.process_file)):
+        result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, '--trash', folder])
+    source = sorted(os.listdir(folder))
+
+    assert result.exit_code == 1, result.output
+    assert 'Success                        1' in result.output, result.output
+    assert 'Error                          1' in result.output, result.output
+    assert source == ['IMG_1234.HEIC', 'IMG_1234.MOV'], source
+    mock_send2trash.assert_not_called()
+
+def test_import_live_photo_video_when_only_the_photo_is_given():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    photo, video = helper.create_live_photo(folder)
+
+    result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, photo])
+    library = _files_in(folder_destination)
+
+    assert result.exit_code == 0, result.output
+    # The video is reported as well
+    assert 'Success                        2' in result.output, result.output
+    assert [os.path.splitext(f)[1] for f in library] == ['.heic', '.mov'], library
+
+def test_update_live_photo_keeps_video_with_photo_which_is_not_updated():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    helper.create_live_photo(folder)
+    runner = CliRunner()
+    runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    library_before = _files_in(folder_destination)
+    photo_dest = os.path.join(folder_destination, [f for f in library_before if f.endswith('.heic')][0])
+
+    with mock.patch.object(Photo, 'set_album', return_value=False):
+        result = runner.invoke(elodie._update, ['--album', 'Holidays', photo_dest])
+    library_after = _files_in(folder_destination)
+    video_album = Video(os.path.join(folder_destination, [f for f in library_after if f.endswith('.mov')][0])).get_album()
+
+    assert result.exit_code == 1, result.output
+    assert 'Error                          2' in result.output, result.output
+    assert library_after == library_before, library_after
+    assert video_album is None, video_album
+
+def test_verify_live_photo_after_import_and_update():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    helper.create_live_photo(folder)
+    runner = CliRunner()
+    runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    photo_dest = os.path.join(folder_destination, [f for f in _files_in(folder_destination) if f.endswith('.heic')][0])
+    runner.invoke(elodie._update, ['--title', 'Beach', photo_dest])
+
+    result = runner.invoke(elodie._verify)
+
+    assert result.exit_code == 0, result.output
+    assert 'Success                        2' in result.output, result.output

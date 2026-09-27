@@ -2224,7 +2224,7 @@ def test_list_directory_indexes_names_without_extension_ignoring_case():
     }, index
     assert missing == {}, missing
 
-# The lookups for sidecars must not scan the whole
+# The lookups for sidecars and Live Photo videos must not scan the whole
 #  directory for each file, that is quadratic for directories with many files.
 def test_lookups_do_not_depend_on_the_number_of_files_in_the_directory():
     filesystem = FileSystem()
@@ -2237,12 +2237,14 @@ def test_lookups_do_not_depend_on_the_number_of_files_in_the_directory():
     with mock.patch('elodie.filesystem.os.path.splitext', wraps=os.path.splitext) as splitext:
         sidecars = filesystem.find_sidecars(photo)
         shared = filesystem.is_sidecar_shared(sidecars[0][0], photo)
+        video = filesystem.find_live_photo_video(photo, Photo(photo))
         calls = splitext.call_count
 
     shutil.rmtree(temporary_folder)
 
     assert sidecars == [(os.path.join(folder, 'IMG_00001.xmp'), False)], sidecars
     assert shared is False
+    assert video is None
     # A few calls per lookup, not one per file in the directory
     assert calls < 50, calls
 
@@ -2475,3 +2477,86 @@ def test_get_file_name_without_placeholders():
     del load_config.config
 
     assert name == 'photo.jpg', name
+
+# gh-474: the video of an Apple Live Photo has the same name and
+#  ContentIdentifier as its photo.
+def test_find_live_photo_video():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    photo, video = helper.create_live_photo(folder, video_extension='mov')
+    other_photo, other_video = helper.create_live_photo(
+        folder, name='IMG_5555', content_identifier='SOMETHING-ELSE')
+    lonely_photo = os.path.join(folder, 'IMG_7777.HEIC')
+    shutil.copyfile(helper.get_file('photo.heic'), lonely_photo)
+
+    found = filesystem.find_live_photo_video(photo, Photo(photo))
+    other_found = filesystem.find_live_photo_video(other_photo, Photo(other_photo))
+    lonely_found = filesystem.find_live_photo_video(lonely_photo, Photo(lonely_photo))
+    # Only photos have a video
+    video_found = filesystem.find_live_photo_video(video, Video(video))
+
+    shutil.rmtree(temporary_folder)
+
+    assert found == video, found
+    assert other_found is None, other_found
+    assert lonely_found is None, lonely_found
+    assert video_found is None, video_found
+
+def test_find_live_photo_video_does_not_read_photo_without_video():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    photo = os.path.join(folder, 'IMG_7777.HEIC')
+    shutil.copyfile(helper.get_file('photo.heic'), photo)
+    media = Photo(photo)
+
+    with mock.patch.object(filesystem, 'get_content_identifier') as get_content_identifier:
+        found = filesystem.find_live_photo_video(photo, media)
+
+    shutil.rmtree(temporary_folder)
+
+    assert found is None
+    assert get_content_identifier.call_count == 0
+
+@pytest.mark.parametrize('photo_dest_path,video,expected', [
+    ('/lib/2019-05-26_10-33-20-img_1234.heic', '/src/IMG_1234.MOV', '/lib/2019-05-26_10-33-20-img_1234.mov'),
+    ('/lib/2019-05-26_10-33-20-IMG_1234.HEIC', '/src/IMG_1234.mp4', '/lib/2019-05-26_10-33-20-IMG_1234.MP4'),
+])
+def test_get_live_photo_video_path(photo_dest_path, video, expected):
+    path = FileSystem().get_live_photo_video_path(photo_dest_path, video)
+    assert path == expected, path
+
+def test_process_file_with_dest_path():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'video.mov')
+    shutil.copyfile(helper.get_file('video.mov'), origin)
+    dest_path = os.path.join(temporary_folder, 'library', 'somewhere', 'name.mov')
+
+    result = filesystem.process_file(origin, os.path.join(temporary_folder, 'library'), Video(origin), dest_path=dest_path)
+    exists = os.path.isfile(dest_path)
+
+    shutil.rmtree(temporary_folder)
+
+    assert result == dest_path, result
+    assert exists
+
+def test_process_file_with_dest_path_does_not_replace_different_file():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'video.mov')
+    shutil.copyfile(helper.get_file('video.mov'), origin)
+    dest_path = os.path.join(temporary_folder, 'library', 'name.mov')
+    os.makedirs(os.path.dirname(dest_path))
+    with open(dest_path, 'w') as f:
+        f.write('another video')
+
+    with mock.patch('builtins.print') as mock_print:
+        result = filesystem.process_file(origin, os.path.join(temporary_folder, 'library'), Video(origin), dest_path=dest_path)
+    with open(dest_path) as f:
+        contents = f.read()
+
+    shutil.rmtree(temporary_folder)
+
+    assert result is None, result
+    assert contents == 'another video', contents
+    assert any('a different file exists' in str(c) for c in mock_print.call_args_list), mock_print.call_args_list

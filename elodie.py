@@ -39,8 +39,12 @@ FILESYSTEM = FileSystem()
 TIME_FORMATS = ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d')
 
 
-def import_file(_file, destination, album_from_folder, trash, allow_duplicates, location=None, time=None):
+def import_file(_file, destination, album_from_folder, trash,
+                allow_duplicates, location=None, time=None, dest_path=None):
     """Set file metadata and move it to destination.
+
+    :param str dest_path: Import the file to this path instead of the one
+        from its metadata, i.e. the video of a Live Photo next to its photo.
     """
     FILESYSTEM.skipped_as_duplicate = False
     FILESYSTEM.imported_sidecars = []
@@ -80,37 +84,165 @@ def import_file(_file, destination, album_from_folder, trash, allow_duplicates, 
     if time and not update_time(media, _file, time):
         return
 
-    dest_path = FILESYSTEM.process_file(_file, destination,
-        media, allowDuplicate=allow_duplicates, move=False)
+    # The video of a Live Photo is imported with its photo, it is looked
+    #  for before the photo can be moved to the trash. gh-474
+    live_photo_video = None
+    if dest_path is None:
+        live_photo_video = FILESYSTEM.find_live_photo_video(_file, media)
+
+    dest_path = FILESYSTEM.process_file(
+        _file, destination, media, allowDuplicate=allow_duplicates,
+        move=False, dest_path=dest_path)
     if dest_path:
         log.all('%s -> %s' % (_file, dest_path))
-    if trash:
-        # Only trash the source if it is safely in the destination: it was
-        #  imported now or it had been imported before (a duplicate).
-        if not dest_path and not is_imported(_file):
-            log.warn('Not moving %s to trash, it was not imported' % _file)
-        elif constants.dry_run:
-            print(f"[DRY-RUN] Would move to trash: {_file}")
-        else:
-            modified = FILESYSTEM.get_directory_modified(_file)
-            send2trash(_file)
-            FILESYSTEM.update_directory_listing(_file, False, modified)
+    skipped_as_duplicate = FILESYSTEM.skipped_as_duplicate
+    imported_sidecars = FILESYSTEM.imported_sidecars
 
-        # Sidecars which were imported with the file follow it to the trash
-        #  unless another file still uses them (i.e. IMG_1234.JPG and
-        #  IMG_1234.CR3 use IMG_1234.xmp). gh-341
-        for sidecar in FILESYSTEM.imported_sidecars:
-            if (not os.path.exists(sidecar) or
-                    FILESYSTEM.is_sidecar_shared(sidecar, _file)):
-                continue
-            if constants.dry_run:
-                print(f"[DRY-RUN] Would move to trash: {sidecar}")
-            else:
-                modified = FILESYSTEM.get_directory_modified(sidecar)
-                send2trash(sidecar)
-                FILESYSTEM.update_directory_listing(sidecar, False, modified)
+    video = None
+    if live_photo_video:
+        video = import_live_photo_video(
+            live_photo_video, _file, dest_path, skipped_as_duplicate,
+            destination, album_from_folder, allow_duplicates, location, time)
+        # The result is the one of the photo
+        FILESYSTEM.skipped_as_duplicate = skipped_as_duplicate
+        FILESYSTEM.imported_sidecars = imported_sidecars
+
+    if trash:
+        # The photo and the video of a Live Photo stay together: they are
+        #  only moved to the trash when both are in the library.
+        if video is not None and video[1] is False:
+            log.warn('Not moving %s to trash, the video of the Live Photo '
+                     'was not imported' % _file)
+        else:
+            move_to_trash(_file, dest_path, imported_sidecars)
+            if video is not None:
+                video_path, status, video_dest_path, sidecars = video
+                move_to_trash(video_path, video_dest_path, sidecars)
 
     return dest_path or None
+
+
+def move_to_trash(_file, dest_path, imported_sidecars):
+    """Move an imported file and the sidecars which were imported with it
+    to the trash.
+
+    :param str dest_path: Path of the file in the library, None if it was
+        imported before (a duplicate).
+    :param list imported_sidecars: Paths of its sidecar files.
+    """
+    # Only trash the source if it is safely in the destination: it was
+    #  imported now or it had been imported before (a duplicate).
+    if not dest_path and not is_imported(_file):
+        log.warn('Not moving %s to trash, it was not imported' % _file)
+    elif constants.dry_run:
+        print(f"[DRY-RUN] Would move to trash: {_file}")
+    else:
+        modified = FILESYSTEM.get_directory_modified(_file)
+        send2trash(_file)
+        FILESYSTEM.update_directory_listing(_file, False, modified)
+
+    # Sidecars which were imported with the file follow it to the trash
+    #  unless another file still uses them (i.e. IMG_1234.JPG and
+    #  IMG_1234.CR3 use IMG_1234.xmp). gh-341
+    for sidecar in imported_sidecars:
+        if (not os.path.exists(sidecar) or
+                FILESYSTEM.is_sidecar_shared(sidecar, _file)):
+            continue
+        if constants.dry_run:
+            print(f"[DRY-RUN] Would move to trash: {sidecar}")
+        else:
+            modified = FILESYSTEM.get_directory_modified(sidecar)
+            send2trash(sidecar)
+            FILESYSTEM.update_directory_listing(sidecar, False, modified)
+
+
+def import_live_photo_video(video, photo, photo_dest_path,
+                            photo_skipped_as_duplicate, destination,
+                            album_from_folder, allow_duplicates, location,
+                            time):
+    """Import the video of a Live Photo next to its photo with the same
+    name, whatever its own date and location say. gh-474
+
+    Its result is recorded with record_live_photo_video() so the command
+    reports it once.
+
+    :returns: tuple of the video, its status (True, None for a duplicate,
+        False for an error), its path in the library and its imported
+        sidecars. None if it was handled already, i.e. with a copy of the
+        photo which has the same identifier.
+    """
+    if os.path.abspath(video) in FILESYSTEM.live_photo_videos:
+        return None
+
+    # The photo may have been imported before, the video goes next to it
+    if not photo_dest_path and photo_skipped_as_duplicate:
+        photo_dest_path = get_imported_path(photo)
+
+    video_dest_path = None
+    sidecars = []
+    if not photo_dest_path:
+        # It stays with its photo in the source so they are imported
+        #  together once the photo can be imported.
+        log.error('Could not import %s since its photo %s was not '
+                  'imported' % (video, photo))
+        status = False
+    else:
+        try:
+            video_dest_path = import_file(
+                video, destination, album_from_folder, False,
+                allow_duplicates, location, time,
+                dest_path=FILESYSTEM.get_live_photo_video_path(
+                    photo_dest_path, video))
+            sidecars = FILESYSTEM.imported_sidecars
+            if video_dest_path:
+                status = True
+            elif FILESYSTEM.skipped_as_duplicate:
+                status = None
+            else:
+                status = False
+        except Exception as e:
+            report_exception(video, e)
+            status = False
+    record_live_photo_video(video, status)
+    return (video, status, video_dest_path, sidecars)
+
+
+def record_live_photo_video(video, status):
+    """Record the result of a video which was handled with its photo, the
+    command reports it and skips it when it comes to it.
+    """
+    FILESYSTEM.live_photo_videos[os.path.abspath(video)] = status
+    FILESYSTEM.new_live_photo_videos.append((video, status))
+
+
+def reset_live_photo_videos():
+    FILESYSTEM.live_photo_videos = {}
+    FILESYSTEM.new_live_photo_videos = []
+
+
+def get_imported_path(_file):
+    """Get the path of an identical copy of _file which was imported before.
+
+    :returns: str or None
+    """
+    db = Db()
+    checksum_file = db.get_hash(db.checksum(_file))
+    if (checksum_file is not None and os.path.isfile(checksum_file) and
+            os.path.abspath(checksum_file) != os.path.abspath(_file)):
+        return checksum_file
+    return None
+
+
+def sort_photos_first(files):
+    """Sort files with the videos last, so the video of a Live Photo is
+    handled with its photo. gh-474
+    """
+    video_extensions = FILESYSTEM.live_photo_video_extensions
+    return sorted(
+        files,
+        key=lambda f: (os.path.splitext(f)[1][1:].lower() in video_extensions,
+                       f)
+    )
 
 
 def is_in_directory(path, directory):
@@ -180,13 +312,7 @@ def is_imported(_file):
     """Check if an identical copy of _file exists at another path, i.e.
     it was imported before.
     """
-    db = Db()
-    checksum_file = db.get_hash(db.checksum(_file))
-    return (
-        checksum_file is not None and
-        os.path.isfile(checksum_file) and
-        os.path.abspath(checksum_file) != os.path.abspath(_file)
-    )
+    return get_imported_path(_file) is not None
 
 @click.command('batch')
 @click.option('--debug', default=False, is_flag=True,
@@ -272,7 +398,13 @@ def _import(destination, source, file, album_from_folder, trash, allow_duplicate
     if files:
         check_location(location)
 
-    for current_file in files:
+    # Photos go first so the video of a Live Photo is imported with its
+    #  photo. gh-474
+    reset_live_photo_videos()
+    for current_file in sort_photos_first(files):
+        if os.path.abspath(current_file) in FILESYSTEM.live_photo_videos:
+            # Imported with its photo, reported then
+            continue
         try:
             dest_path = import_file(current_file, destination,
                                     album_from_folder, trash,
@@ -289,6 +421,7 @@ def _import(destination, source, file, album_from_folder, trash, allow_duplicate
             status = False  # error
         result.append((current_file, status))
         has_errors = has_errors or status is False
+        has_errors = report_live_photo_videos(result) or has_errors
 
     result.write()
 
@@ -429,10 +562,12 @@ def get_library_directory(media, file_path):
     return os.sep.join(parts[:-depth]) or os.sep
 
 
-def update_file(current_file, album, location, time, title):
+def update_file(current_file, album, location, time, title, dest_path=None):
     """Update the metadata of a file and move it to its folder in the
     library.
 
+    :param str dest_path: Move the file to this path instead of the one from
+        its metadata, i.e. the video of a Live Photo next to its photo.
     :returns: bool
     """
     if not os.path.exists(current_file):
@@ -448,17 +583,40 @@ def update_file(current_file, album, location, time, title):
                 current_file)
         return False
 
-    # The library is found from the folders of the metadata before the
-    #  update.
-    destination = get_library_directory(media, current_file)
+    live_photo_video = None
+    if dest_path is None:
+        # The library is found from the folders of the metadata before the
+        #  update.
+        destination = get_library_directory(media, current_file)
+        # The video of a Live Photo follows its photo with the same
+        #  changes, it is looked for before the photo is moved. gh-474
+        live_photo_video = FILESYSTEM.find_live_photo_video(
+            current_file, media)
+    else:
+        destination = os.path.dirname(dest_path)
 
+    new_path = update_media(media, current_file, destination, album,
+                            location, time, title, dest_path)
+
+    if live_photo_video:
+        update_live_photo_video(live_photo_video, current_file, new_path,
+                                album, location, time, title)
+    return bool(new_path)
+
+
+def update_media(media, current_file, destination, album, location, time,
+                 title, dest_path=None):
+    """Update the metadata of a file and move it.
+
+    :returns: str its new path or None
+    """
     if location and not update_location(media, current_file, location):
-        return False
+        return None
     if time and not update_time(media, current_file, time):
-        return False
+        return None
     if album and not media.set_album(album):
         log.error('Failed to update album of %s' % current_file)
-        return False
+        return None
 
     # Updating a title can be problematic when doing it 2+ times on a file.
     # You would end up with img_001.jpg -> img_001-first-title.jpg ->
@@ -475,7 +633,7 @@ def update_file(current_file, album, location, time, title):
         original_title = metadata['title']
         if not media.set_title(title):
             log.error('Failed to update title of %s' % current_file)
-            return False
+            return None
         if original_title:
             # @TODO: We should move this to a shared method since
             # FileSystem.get_file_name() does it too.
@@ -498,7 +656,7 @@ def update_file(current_file, album, location, time, title):
             original_base_name.replace('-%s' % original_title, ''))
 
     dest_path = FILESYSTEM.process_file(current_file, destination,
-        updated_media, move=True, allowDuplicate=True)
+        updated_media, move=True, allowDuplicate=True, dest_path=dest_path)
     log.info(u'%s -> %s' % (current_file, dest_path))
     log.all('{"source":"%s", "destination":"%s"}' % (current_file,
                                                        dest_path))
@@ -507,7 +665,47 @@ def update_file(current_file, album, location, time, title):
     FILESYSTEM.delete_directory_if_empty(os.path.dirname(current_file))
     FILESYSTEM.delete_directory_if_empty(
         os.path.dirname(os.path.dirname(current_file)))
-    return bool(dest_path)
+    return dest_path or None
+
+
+
+
+def update_live_photo_video(video, photo, photo_dest_path, album, location,
+                            time, title):
+    """Update the video of a Live Photo like its photo and move it next to
+    it. gh-474
+    """
+    if os.path.abspath(video) in FILESYSTEM.live_photo_videos:
+        return
+    if not photo_dest_path:
+        # It stays with its photo
+        log.error('Could not update %s since its photo %s was not '
+                  'updated' % (video, photo))
+        status = False
+    else:
+        try:
+            status = update_file(
+                video, album, location, time, title,
+                dest_path=FILESYSTEM.get_live_photo_video_path(
+                    photo_dest_path, video))
+        except Exception as e:
+            report_exception(video, e)
+            status = False
+    record_live_photo_video(video, status)
+
+
+def report_live_photo_videos(result):
+    """Add the results of the videos of Live Photos which were handled with
+    their photo.
+
+    :returns: bool whether one failed
+    """
+    failed = False
+    for video, status in FILESYSTEM.new_live_photo_videos:
+        result.append((video, status))
+        failed = failed or status is False
+    FILESYSTEM.new_live_photo_videos = []
+    return failed
 
 
 @click.command('update')
@@ -547,7 +745,13 @@ def _update(album, location, time, title, paths, debug, dry_run):
 
     check_location(location)
 
-    for current_file in files:
+    # Photos go first so the video of a Live Photo is updated with its
+    #  photo. gh-474
+    reset_live_photo_videos()
+    for current_file in sort_photos_first(files):
+        if os.path.abspath(current_file) in FILESYSTEM.live_photo_videos:
+            # Updated with its photo, reported then
+            continue
         try:
             status = update_file(current_file, album, location, time, title)
         except Exception as e:
@@ -555,6 +759,7 @@ def _update(album, location, time, title, paths, debug, dry_run):
             status = False
         result.append((current_file, status))
         has_errors = has_errors or not status
+        has_errors = report_live_photo_videos(result) or has_errors
 
     result.write()
 

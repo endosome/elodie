@@ -19,6 +19,8 @@ from elodie import log
 from elodie.config import load_config
 from elodie.localstorage import Db
 from elodie.media.base import Base, get_all_subclasses
+from elodie.media.photo import Photo
+from elodie.media.video import Video
 from elodie.plugins.plugins import Plugins
 
 class FileSystem(object):
@@ -50,6 +52,18 @@ class FileSystem(object):
         self.imported_sidecars = []
         # Folder listings to find sidecar files, see list_directory()
         self.directory_listings = {}
+
+        # The video of an Apple Live Photo is stored next to the photo with
+        #  the same name, i.e. IMG_1234.HEIC and IMG_1234.MOV. gh-474
+        self.live_photo_video_extensions = ('mov', 'mp4')
+        self.content_identifier_keys = (
+            'MakerNotes:ContentIdentifier',  # photo
+            'QuickTime:ContentIdentifier',  # video
+        )
+        # Results of the videos which were imported or updated with their
+        #  photo by path, see elodie.py
+        self.live_photo_videos = {}
+        self.new_live_photo_videos = []
         # Python3 treats the regex \s differently than Python2.
         # It captures some additional characters like the unicode checkmark \u2713.
         # See build failures in Python3 here.
@@ -761,10 +775,20 @@ class FileSystem(object):
             log.warn('At least one plugin pre-run failed for %s' % _file)
             return
 
-        dest_path = self.get_destination_path(
-            _file, destination, metadata, checksum)
-        if dest_path is None:
-            return
+        if kwargs.get('dest_path'):
+            # The path is given, i.e. for the video of a Live Photo which
+            #  follows its photo. A different file there is not replaced.
+            dest_path = os.path.normpath(kwargs['dest_path'])
+            if (os.path.exists(dest_path) and
+                    not self.is_same_file(_file, dest_path) and
+                    not filecmp.cmp(_file, dest_path, shallow=False)):
+                print('%s was not imported since a different file exists at %s' % (_file, dest_path))  # noqa
+                return
+        else:
+            dest_path = self.get_destination_path(
+                _file, destination, metadata, checksum)
+            if dest_path is None:
+                return
         dest_directory = os.path.dirname(dest_path)
 
         # If source and destination are identical then
@@ -835,6 +859,72 @@ class FileSystem(object):
 
 
         return dest_path
+
+    def get_content_identifier(self, media):
+        """Get the identifier which Apple writes to the photo and the video
+        of a Live Photo.
+
+        :param media: Media object of the file.
+        :returns: str or None
+        """
+        exif = media.get_exiftool_attributes()
+        if not exif:
+            return None
+        for key in self.content_identifier_keys:
+            if exif.get(key):
+                return str(exif[key])
+        return None
+
+    def find_live_photo_video(self, photo_path, media):
+        """Find the video of an Apple Live Photo: a video in the same
+        directory with the same name, ignoring case, and the same content
+        identifier as the photo, i.e. IMG_1234.MOV for IMG_1234.HEIC. gh-474
+
+        :param str photo_path: Path of the photo.
+        :param media: Media object of the photo.
+        :returns: str path of the video or None
+        """
+        if not isinstance(media, Photo):
+            return None
+
+        # The identifier of the photo is only read when there is a video
+        #  with the same name.
+        base = os.path.splitext(os.path.basename(photo_path))[0].lower()
+        directory = os.path.dirname(photo_path)
+        candidates = []
+        for entry in self.list_directory(directory).get(base, []):
+            extension = os.path.splitext(entry)[1][1:].lower()
+            if extension in self.live_photo_video_extensions:
+                path = os.path.join(directory, entry)
+                if os.path.isfile(path):
+                    candidates.append(path)
+        if not candidates:
+            return None
+
+        content_identifier = self.get_content_identifier(media)
+        if content_identifier is None:
+            return None
+        for path in sorted(candidates):
+            video = Video(path)
+            if (video.is_valid() and
+                    self.get_content_identifier(video) == content_identifier):
+                return path
+        return None
+
+    def get_live_photo_video_path(self, photo_dest_path, video_path):
+        """Path of the video of a Live Photo next to its photo in the
+        library, with the name of the photo: 2021-05-01_12-00-00-img_1234.mov
+        for 2021-05-01_12-00-00-img_1234.heic.
+
+        :param str photo_dest_path: Path of the photo in the library.
+        :param str video_path: Path of the video.
+        :returns: str
+        """
+        return os.path.join(
+            os.path.dirname(photo_dest_path),
+            self.get_sidecar_name(
+                os.path.basename(photo_dest_path), video_path, False)
+        )
 
     def get_sidecar_extensions(self):
         """Get the extensions of sidecar files which are imported with the

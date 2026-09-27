@@ -1,5 +1,8 @@
 # Project imports
 import os
+import unittest.mock as mock
+
+import pytest
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))))
@@ -259,3 +262,57 @@ def test_get_location_coordinates_does_not_exists():
     location = db.get_location_coordinates(name)
 
     assert location is None
+
+def test_get_location_name_returns_the_closest_location():
+    # The closest location within the threshold, whatever the order of the
+    #  locations in the database
+    db = Db()
+    db.location_db = []
+    db.add_location(37.0005, -122.0, 'Near')    # 55 m
+    db.add_location(37.1000, -122.0, 'Far')     # 11 km, outside
+    db.add_location(37.0100, -122.0, 'Medium')  # 1.1 km
+
+    assert db.get_location_name(37.0, -122.0, 3000) == 'Near'
+    db.location_db.reverse()
+    assert db.get_location_name(37.0, -122.0, 3000) == 'Near'
+
+def test_unreadable_hash_db_is_moved_aside():
+    # i.e. cut off by a crash while it was written. It must not be
+    #  overwritten, it can be recovered.
+    with open(constants.hash_db(), 'w') as f:
+        f.write('{"abc": "/photos/a.jpg", "de')
+
+    with mock.patch('elodie.log.error') as error:
+        db = Db()
+    corrupt = [f for f in os.listdir(constants.application_directory()) if f.startswith('hash.json-corrupt-')]
+
+    assert db.hash_db == {}
+    assert len(corrupt) == 1, corrupt
+    with open(os.path.join(constants.application_directory(), corrupt[0])) as f:
+        assert f.read() == '{"abc": "/photos/a.jpg", "de'
+    assert 'hash.json-corrupt-' in error.call_args[0][0]
+
+def test_empty_db_files_are_not_unreadable():
+    # Created and not written yet
+    open(constants.hash_db(), 'w').close()
+    open(constants.location_db(), 'w').close()
+
+    with mock.patch('elodie.log.error') as error:
+        db = Db()
+
+    assert (db.hash_db, db.location_db) == ({}, [])
+    assert error.call_count == 0
+    assert sorted(os.listdir(constants.application_directory())) == ['config.ini', 'hash.json', 'location.json']
+
+def test_interrupted_write_keeps_the_hash_db():
+    # i.e. Ctrl-C while writing
+    db = Db()
+    db.add_hash('abc', '/photos/a.jpg', True)
+
+    db.add_hash('def', '/photos/b.jpg')
+    with mock.patch('json.dump', side_effect=KeyboardInterrupt()):
+        with pytest.raises(KeyboardInterrupt):
+            db.update_hash_db()
+
+    assert Db().hash_db == {'abc': '/photos/a.jpg'}
+    assert not os.path.exists(constants.hash_db() + '.tmp')

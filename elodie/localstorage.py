@@ -12,6 +12,7 @@ from shutil import copyfile
 from time import strftime
 
 from elodie import constants
+from elodie import log
 
 
 class Db(object):
@@ -30,15 +31,7 @@ class Db(object):
             with open(constants.hash_db(), 'a'):
                 os.utime(constants.hash_db(), None)
 
-        self.hash_db = {}
-
-        # We know from above that this file exists so we open it
-        #   for reading only.
-        with open(constants.hash_db(), 'r') as f:
-            try:
-                self.hash_db = json.load(f)
-            except ValueError:
-                pass
+        self.hash_db = self._load(constants.hash_db(), {})
 
         # If the location db doesn't exist we create it.
         # Otherwise we only open for reading
@@ -46,15 +39,43 @@ class Db(object):
             with open(constants.location_db(), 'a'):
                 os.utime(constants.location_db(), None)
 
-        self.location_db = []
+        self.location_db = self._load(constants.location_db(), [])
 
-        # We know from above that this file exists so we open it
-        #   for reading only.
-        with open(constants.location_db(), 'r') as f:
-            try:
-                self.location_db = json.load(f)
-            except ValueError:
-                pass
+    @staticmethod
+    def _load(path, empty):
+        """Load a database. One which cannot be read, i.e. after a crash
+        while it was written by an older version, is moved aside so it is
+        not overwritten and can be recovered.
+        """
+        with open(path, 'r') as f:
+            content = f.read()
+        if not content.strip():
+            # Created and not written yet
+            return empty
+        try:
+            return json.loads(content)
+        except ValueError:
+            corrupt_path = '%s-corrupt-%s' % (
+                path, strftime('%Y-%m-%d_%H-%M-%S'))
+            os.replace(path, corrupt_path)
+            log.error('Could not read %s, it was moved to %s and a new one '
+                      'is started' % (path, corrupt_path))
+            return empty
+
+    @staticmethod
+    def _write(path, data):
+        """Write a database to another file which then replaces it, so a
+        write which is interrupted (i.e. Ctrl-C) does not corrupt it.
+        """
+        temporary_path = path + '.tmp'
+        try:
+            with open(temporary_path, 'w') as f:
+                json.dump(data, f)
+            os.replace(temporary_path, path)
+        except BaseException:
+            if os.path.exists(temporary_path):
+                os.remove(temporary_path)
+            raise
 
     def add_hash(self, key, value, write=False):
         """Add a hash to the hash db.
@@ -145,7 +166,8 @@ class Db(object):
             the given latitude and longitude.
         :returns: str, or None if a matching location couldn't be found.
         """
-        last_d = sys.maxsize
+        # The closest location within the threshold
+        closest_d = sys.maxsize
         name = None
         for data in self.location_db:
             # As threshold is quite small use simple math
@@ -161,10 +183,9 @@ class Db(object):
             x = (lon2 - lon1) * cos(0.5 * (lat2 + lat1))
             y = lat2 - lat1
             d = r * sqrt(x * x + y * y)
-            # Use if closer then threshold_km reuse lookup
-            if(d <= threshold_m and d < last_d):
+            if d <= threshold_m and d < closest_d:
                 name = data['name']
-            last_d = d
+                closest_d = d
 
         return name
 
@@ -196,13 +217,11 @@ class Db(object):
         if constants.dry_run:
             print(f"[DRY-RUN] Would update hash database with {len(self.hash_db)} entries")
             return
-        with open(constants.hash_db(), 'w') as f:
-            json.dump(self.hash_db, f)
+        self._write(constants.hash_db(), self.hash_db)
 
     def update_location_db(self):
         """Write the location db to disk."""
         if constants.dry_run:
             print(f"[DRY-RUN] Would update location database with {len(self.location_db)} entries")
             return
-        with open(constants.location_db(), 'w') as f:
-            json.dump(self.location_db, f)
+        self._write(constants.location_db(), self.location_db)

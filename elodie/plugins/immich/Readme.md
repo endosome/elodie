@@ -59,7 +59,9 @@ Each run compares three states of every photo: the one Elodie and Immich had aft
 
 Immich sees a moved file as a new photo. Since its albums and favorite are stored in the photo, they are restored in Immich on the next run after Immich scanned it.
 
-A photo is only read again when its file changed since the last run, so runs on large libraries are fast after the first one. A long first run can be stopped, the next run continues where it stopped.
+A photo is only read again when its file changed since the last run, so runs on large libraries are fast after the first one. A long first run can be stopped, the next run continues where it stopped. Only one sync runs at a time, one started meanwhile, i.e. by cron, stops with an error.
+
+The state of the last run is stored in `plugins/immich.json` in Elodie's application directory. If it can't be read, i.e. after a crash, it's moved aside and the next run syncs all photos like the first run, without losing albums or favorites.
 
 ### Albums
 

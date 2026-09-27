@@ -621,7 +621,7 @@ class FileSystem(object):
                 loc_part
             ).groups()
 
-            if(key in place_name):
+            if(place_name.get(key)):
                 found = True
                 replace_target = component
                 replace_with = place_name[key]
@@ -635,7 +635,8 @@ class FileSystem(object):
             )
 
         if(not found and folder_name == ''):
-            folder_name = place_name['default']
+            folder_name = (place_name.get('default') or
+                           geolocation.__DEFAULT_LOCATION__)
 
         return folder_name
 

@@ -7,7 +7,6 @@ General file system methods.
 import filecmp
 import os
 import re
-import shutil
 import time
 from stat import S_IWUSR
 from send2trash import send2trash
@@ -74,7 +73,7 @@ class FileSystem(object):
         src_modified = self.get_directory_modified(src)
         if operation_type == 'move':
             dst_modified = self.get_directory_modified(dst)
-            shutil.move(src, dst)
+            compatability._move(src, dst)
             self.update_directory_listing(src, False, src_modified)
             if os.path.dirname(src) == os.path.dirname(dst):
                 # Renamed, the listing was updated for the removal

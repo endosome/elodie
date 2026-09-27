@@ -1481,7 +1481,7 @@ full_path=%year/%album|%month|%"foo"/%month
 # Dry-run tests
 @mock.patch('elodie.constants.dry_run', True)
 @mock.patch('builtins.print')
-@mock.patch('elodie.filesystem.shutil.move')
+@mock.patch('elodie.compatability._move')
 def test_file_operation_move_dry_run(mock_move, mock_print):
     """Test that move operation is logged but not executed in dry-run mode."""
     filesystem = FileSystem()
@@ -1532,7 +1532,7 @@ def test_file_operation_send2trash_dry_run(mock_send2trash, mock_print):
 
 
 @mock.patch('elodie.constants.dry_run', False)
-@mock.patch('elodie.filesystem.shutil.move')
+@mock.patch('elodie.compatability._move')
 def test_file_operation_move_normal_mode(mock_move):
     """Test that move operation is executed normally when not in dry-run mode."""
     filesystem = FileSystem()

@@ -18,7 +18,7 @@ from elodie import geolocation
 from elodie import log
 from elodie.config import load_config
 from elodie.localstorage import Db
-from elodie.media.base import Base, get_all_subclasses
+from elodie.media.base import Base, get_all_subclasses, is_apple_double
 from elodie.media.photo import Photo
 from elodie.media.video import Video
 from elodie.plugins.plugins import Plugins
@@ -168,7 +168,9 @@ class FileSystem(object):
                 filename_path = os.path.join(dirname, filename)
                 if (
                         os.path.splitext(filename)[1][1:].lower() in extensions and
-                        not self.should_exclude(filename_path, compiled_regex_list, False)
+                        not self.should_exclude(filename_path, compiled_regex_list, False) and
+                        # Written by macOS next to files, ._IMG_1234.MOV
+                        not is_apple_double(filename_path)
                     ):
                     yield filename_path
 

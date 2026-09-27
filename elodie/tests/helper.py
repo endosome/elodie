@@ -116,6 +116,17 @@ def get_file_path(name):
     current_folder = os.path.dirname(os.path.realpath(__file__))
     return os.path.join(current_folder, 'files', name)
 
+def create_apple_double(path):
+    """Create an AppleDouble file like macOS writes next to a file on a USB
+    drive, i.e. ._IMG_1234.MOV: its header with one Finder info entry.
+    """
+    header = (b'\x00\x05\x16\x07' + b'\x00\x02\x00\x00' + b'Mac OS X        ' +
+              b'\x00\x01' + b'\x00\x00\x00\x09' + b'\x00\x00\x00\x32' + b'\x00\x00\x00\x20')
+    with open(path, 'wb') as f:
+        f.write(header + b'\x00' * 32)
+    return path
+
+
 #: ContentIdentifier of the photo.heic test file, which is from an iPhone.
 LIVE_PHOTO_CONTENT_IDENTIFIER = '76C3E45A-2CCC-498B-9C1A-29C3ADD99D39'
 

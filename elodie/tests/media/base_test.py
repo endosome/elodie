@@ -8,6 +8,8 @@ import re
 import shutil
 import string
 import tempfile
+
+import pytest
 import time
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))))
@@ -134,3 +136,27 @@ def test_set_metadata_basename():
     new_metadata = photo.get_metadata()
 
     assert new_metadata['base_name'] == new_basename, new_metadata['base_name']
+
+@pytest.mark.parametrize('name,apple_double,expected', [
+    ('._IMG_1234.MOV', True, True),
+    ('._IMG_1234.HEIC', True, True),
+    # Only the name or only the content is not enough
+    ('IMG_1234.MOV', True, False),
+    ('._IMG_1234.MOV', False, False),
+])
+def test_is_apple_double(tmp_path, name, apple_double, expected):
+    from elodie.media.base import is_apple_double
+    path = str(tmp_path / name)
+    if apple_double:
+        helper.create_apple_double(path)
+    else:
+        shutil.copyfile(helper.get_file('video.mov'), path)
+
+    assert is_apple_double(path) is expected
+    assert is_apple_double(str(tmp_path / '._missing.mov')) is False
+
+def test_get_class_by_file_apple_double(tmp_path):
+    # macOS writes ._IMG_1234.MOV next to IMG_1234.MOV, i.e. on a USB drive
+    path = helper.create_apple_double(str(tmp_path / '._IMG_1234.MOV'))
+
+    assert Base.get_class_by_file(path, [Audio, Text, Photo, Video]) is None

@@ -59,6 +59,30 @@ class Video(Media):
     #:  are treated as UTC.
     utc_date_keys = ('QuickTime:CreateDate', 'QuickTime:MediaCreateDate')
 
+    def is_valid(self):
+        """Check the file extension and whether exiftool reads the file as a
+        video or audio file, like for photos. An empty or damaged file, or
+        the AppleDouble file ._IMG_1234.MOV which macOS writes next to
+        IMG_1234.MOV, is not imported as a video.
+
+        :returns: bool
+        """
+        if not super(Video, self).is_valid():
+            return False
+
+        try:
+            exif = self.get_exiftool_attributes()
+        except ValueError:
+            # exiftool is not running
+            return False
+
+        if not exif:
+            return False
+
+        # i.e. an iPhone voice memo in .m4a is video/quicktime
+        media_type = str(exif.get('File:MIMEType', '')).split('/')[0]
+        return media_type in ('video', 'audio')
+
     def get_date_taken(self):
         """Get the date which the video was taken.
 

@@ -312,3 +312,34 @@ def test_get_date_taken_without_metadata_uses_file_time():
 ])
 def test_normalize_date_string(value, expected):
     assert Video().normalize_date_string(value) == expected
+
+def _write(path, content):
+    with open(path, 'wb') as f:
+        f.write(content)
+    return path
+
+@pytest.mark.parametrize('content', [
+    b'',
+    b'not a video',
+    bytes(range(256)) * 8,
+    'apple double',
+], ids=['empty', 'text', 'random', 'apple-double'])
+def test_is_valid_checks_the_content(tmp_path, content):
+    # Only the extension was checked, the AppleDouble file ._IMG_1234.MOV of
+    #  macOS or an empty file was imported as a video
+    if content == 'apple double':
+        path = helper.create_apple_double(str(tmp_path / 'IMG_1234.MOV'))
+    else:
+        path = _write(str(tmp_path / 'IMG_1234.MOV'), content)
+
+    assert not Video(path).is_valid()
+
+@pytest.mark.parametrize('file_name', ['video.mov', 'video.mkv', 'video.webm'])
+def test_is_valid_videos(file_name):
+    assert Video(helper.get_file(file_name)).is_valid()
+
+@pytest.mark.parametrize('file_name', ['audio.m4a', 'audio.mp3', 'audio.flac', 'audio.ogg', 'audio.opus'])
+def test_is_valid_audio(file_name):
+    # audio.m4a, a voice memo of an iPhone, is video/quicktime
+    from elodie.media.audio import Audio
+    assert Audio(helper.get_file(file_name)).is_valid()

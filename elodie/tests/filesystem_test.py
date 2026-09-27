@@ -2560,3 +2560,18 @@ def test_process_file_with_dest_path_does_not_replace_different_file():
     assert result is None, result
     assert contents == 'another video', contents
     assert any('a different file exists' in str(c) for c in mock_print.call_args_list), mock_print.call_args_list
+
+def test_get_all_files_skips_apple_double_files():
+    # macOS writes ._IMG_1234.MOV next to IMG_1234.MOV on a USB drive or
+    #  network share
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('video.mov'), os.path.join(folder, 'IMG_1234.MOV'))
+    helper.create_apple_double(os.path.join(folder, '._IMG_1234.MOV'))
+    helper.create_apple_double(os.path.join(folder, '._IMG_1234.HEIC'))
+    # A video whose name starts with ._ is not skipped
+    shutil.copyfile(helper.get_file('video.mov'), os.path.join(folder, '._video.mov'))
+
+    files = sorted(os.path.basename(f) for f in filesystem.get_all_files(folder))
+
+    assert files == ['._video.mov', 'IMG_1234.MOV'], files

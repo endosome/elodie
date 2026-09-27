@@ -271,6 +271,8 @@ class Base(object):
         """
         if not isinstance(_file, (bytes, str)) or not os.path.isfile(_file):
             return None
+        if is_apple_double(_file):
+            return None
 
         extension = os.path.splitext(_file)[1][1:].lower()
 
@@ -288,6 +290,30 @@ class Base(object):
         :returns: tuple(str)
         """
         return cls.extensions
+
+
+#: The first bytes of an AppleDouble file.
+APPLE_DOUBLE_MAGIC = b'\x00\x05\x16\x07'
+
+
+def is_apple_double(path):
+    """Check if a file is an AppleDouble file: macOS writes one named
+    ._IMG_1234.MOV next to IMG_1234.MOV on file systems without extended
+    attributes, i.e. USB drives, SD cards and network shares. It only
+    contains metadata of the file system, it is not a photo or video.
+
+    :param str path: Path of the file.
+    :returns: bool
+    """
+    if isinstance(path, bytes):
+        path = path.decode('utf-8', 'surrogateescape')
+    if not os.path.basename(path).startswith('._'):
+        return False
+    try:
+        with open(path, 'rb') as f:
+            return f.read(len(APPLE_DOUBLE_MAGIC)) == APPLE_DOUBLE_MAGIC
+    except OSError:
+        return False
 
 
 def get_all_subclasses(cls=None):

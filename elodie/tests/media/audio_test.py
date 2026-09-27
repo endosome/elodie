@@ -221,7 +221,7 @@ def test_get_date_taken_falls_back_to_modification_time(value):
     os.utime(origin, (1584273600, 1584273600))
 
     audio = Audio(origin)
-    with mock.patch.object(audio, 'get_exiftool_attributes', return_value={'Vorbis:Date': value}):
+    with mock.patch.object(audio, 'get_exiftool_attributes', return_value={'File:MIMEType': 'audio/ogg', 'Vorbis:Date': value}):
         date_taken = audio.get_date_taken()
 
     shutil.rmtree(folder)

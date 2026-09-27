@@ -2352,3 +2352,35 @@ def test_verify_live_photo_after_import_and_update():
 
     assert result.exit_code == 0, result.output
     assert 'Success                        2' in result.output, result.output
+
+@mock.patch.object(elodie, 'send2trash')
+def test_import_live_photo_with_apple_double_files(mock_send2trash):
+    # Copied by a Mac to a USB drive: the AppleDouble files ._IMG_1234.MOV
+    #  were imported as videos and ._IMG_1234.HEIC were errors
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    helper.create_live_photo(folder)
+    helper.create_apple_double(os.path.join(folder, '._IMG_1234.HEIC'))
+    helper.create_apple_double(os.path.join(folder, '._IMG_1234.MOV'))
+    trashed = []
+    mock_send2trash.side_effect = lambda path: trashed.append(os.path.basename(path))
+
+    result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, '--trash', folder])
+    library = _files_in(folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert 'Success                        2' in result.output, result.output
+    assert 'Error                          0' in result.output, result.output
+    assert [os.path.splitext(f)[1] for f in library] == ['.heic', '.mov'], library
+    assert sorted(trashed) == ['IMG_1234.HEIC', 'IMG_1234.MOV'], trashed
+
+def test_import_apple_double_file_given_explicitly():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    path = helper.create_apple_double(os.path.join(folder, '._IMG_1234.MOV'))
+
+    result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, path])
+
+    assert result.exit_code == 1, result.output
+    assert 'Error                          1' in result.output, result.output
+    assert _files_in(folder_destination) == []

@@ -887,7 +887,8 @@ def test_import_same_file_through_symlink_does_not_stop_the_run():
     shutil.rmtree(temporary_folder_destination)
 
     assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
-    assert 'Final source and destination path should not be identical' in result.output, result.output
+    # The file is in the library, it is not imported into it again
+    assert 'Source cannot be in destination' in result.output, result.output
     assert 'Success                        1' in result.output, result.output
     assert 'Error                          1' in result.output, result.output
 
@@ -930,6 +931,8 @@ def test_import_file_send_to_trash_with_sidecars(mock_send2trash):
     assert len(library_sidecars) == 3, library_sidecars
 
 def test_import_destination_in_source():
+    # The files of the source are imported, also the ones next to the
+    #  destination
     temporary_folder, folder = helper.create_working_folder()
     folder_destination = '{}/destination'.format(folder)
     os.mkdir(folder_destination)
@@ -943,7 +946,49 @@ def test_import_destination_in_source():
 
     shutil.rmtree(folder)
 
-    assert dest_path is None, dest_path
+    assert dest_path is not None and dest_path.startswith(folder_destination + os.sep), dest_path
+
+def test_import_file_in_destination_is_not_imported_again():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    origin = os.path.join(folder, 'plain.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+
+    dest_path_again = elodie.import_file(dest_path, folder_destination, False, False, True)
+    library = sorted(os.path.join(d, f) for d, _, fs in os.walk(folder_destination) for f in fs)
+
+    shutil.rmtree(folder)
+    shutil.rmtree(folder_destination)
+
+    assert dest_path_again is None, dest_path_again
+    assert library == [dest_path], library
+
+def test_import_source_which_contains_the_destination_skips_the_library():
+    # i.e. elodie import --destination ~/Pictures/library ~/Pictures run
+    #  again after new photos were added: the library is not imported
+    #  into itself, also not with --allow-duplicates
+    temporary_folder, folder = helper.create_working_folder()
+    folder_destination = os.path.join(folder, 'library')
+    os.makedirs(os.path.join(folder, 'phone'))
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'phone', 'plain.jpg'))
+
+    runner = CliRunner()
+    first = runner.invoke(elodie._import, ['--destination', folder_destination, '--allow-duplicates', folder])
+    shutil.copyfile(helper.get_file('with-title.jpg'), os.path.join(folder, 'phone', 'with-title.jpg'))
+    second = runner.invoke(elodie._import, ['--destination', folder_destination, '--allow-duplicates', folder])
+    library = sorted(f for d, _, fs in os.walk(folder_destination) for f in fs)
+
+    shutil.rmtree(folder)
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    # Both files of the source are imported again, none of the library
+    assert 'Success                        2' in second.output, second.output
+    assert 'Error                          0' in second.output, second.output
+    # The copy of plain.jpg which the hash database knows is used again
+    assert library == ['2015-12-05_00-59-26-plain.jpg',
+                       '2015-12-05_00-59-26-with-title-some-title.jpg'], library
 
 def test_import_destination_in_source_gh_287():
     temporary_folder, folder = helper.create_working_folder()
@@ -1558,9 +1603,9 @@ def test_cli_debug_import():
 def test_cli_debug_update():
     runner = CliRunner()
     # update
-    result = runner.invoke(elodie._update, ['--location', 'foobar', '/does/not/exist'])
+    result = runner.invoke(elodie._update, ['--album', 'foobar', '/does/not/exist'])
     assert "Could not find /does/not/exist\n" not in result.output, result.output
-    result = runner.invoke(elodie._update, ['--location', 'foobar', '--debug', '/does/not/exist'])
+    result = runner.invoke(elodie._update, ['--album', 'foobar', '--debug', '/does/not/exist'])
     assert "Could not find /does/not/exist\n" in result.output, result.output
 
 @mock.patch.object(elodie, 'send2trash')
@@ -1764,3 +1809,148 @@ def test_verify_files_after_import_and_update():
     assert 'Error                          0' in verify_update.output, verify_update.output
     assert 'Duplicate, not imported        1' in import_again.output, import_again.output
     assert len(files) == 1 and 'new-title' in files[0], files
+
+def test_import_duplicates_only_exits_without_error():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'plain.jpg'))
+
+    runner = CliRunner()
+    first = runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    second = runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert 'Duplicate, not imported        1' in second.output, second.output
+
+def test_update_without_anything_to_update_is_an_error():
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'plain.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    result = CliRunner().invoke(elodie._update, [origin])
+
+    assert result.exit_code == 2, result.output
+    assert 'Nothing to update' in result.output, result.output
+    assert os.listdir(folder) == ['plain.jpg']
+
+@pytest.mark.parametrize('command', ['import', 'update'])
+@pytest.mark.parametrize('value', ['2015-01-01 10:00', 'yesterday', '01-01-2015'])
+def test_invalid_time_changes_nothing(command, value):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    origin = os.path.join(folder, 'plain.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    if command == 'import':
+        result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, '--time', value, origin])
+    else:
+        result = CliRunner().invoke(elodie._update, ['--time', value, origin])
+
+    assert result.exit_code == 2, result.output
+    assert 'Invalid value for \'--time\'' in result.output, result.output
+    assert os.listdir(folder) == ['plain.jpg']
+    assert _library_files(folder_destination) == []
+    assert helper.checksum(origin) == helper.checksum(helper.get_file('plain.jpg'))
+
+@pytest.mark.parametrize('value,expected', [
+    ('2015-01-01', (2015, 1, 1, 0, 0, 0)),
+    ('2015-01-01 10:20:30', (2015, 1, 1, 10, 20, 30)),
+    ('2015-01-01 10:00', None),
+    ('2015-13-01', None),
+    ('', None),
+])
+def test_parse_time(value, expected):
+    parsed = elodie.parse_time(value)
+    assert (parsed.timetuple()[:6] if parsed else None) == expected, parsed
+
+@mock.patch.object(elodie.geolocation, 'coordinates_by_name', return_value=None)
+@pytest.mark.parametrize('command', ['import', 'update'])
+def test_location_which_is_not_found_changes_nothing(mock_coordinates, command):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    origin = os.path.join(folder, 'plain.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    if command == 'import':
+        result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, '--location', 'Nowhere', origin])
+    else:
+        result = CliRunner().invoke(elodie._update, ['--location', 'Nowhere', origin])
+
+    assert result.exit_code == 1, result.output
+    assert 'Could not find the location Nowhere' in result.output, result.output
+    assert os.listdir(folder) == ['plain.jpg']
+    assert _library_files(folder_destination) == []
+    assert helper.checksum(origin) == helper.checksum(helper.get_file('plain.jpg'))
+
+@mock.patch.object(elodie.geolocation, 'coordinates_by_name', return_value={})
+def test_update_location_which_is_not_found(mock_coordinates):
+    photo = Photo(helper.get_file('plain.jpg'))
+    assert elodie.update_location(photo, photo.get_file_path(), 'Nowhere') is False
+
+def test_update_unsupported_file_is_an_error():
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'file.unsupported')
+    with open(origin, 'w') as f:
+        f.write('text')
+
+    result = CliRunner().invoke(elodie._update, ['--title', 'title', origin])
+
+    assert result.exit_code == 1, result.output
+    assert 'Error                          1' in result.output, result.output
+
+@mock.patch('elodie.constants.dry_run', False)
+def test_update_does_not_move_file_when_metadata_cannot_be_written():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    origin = os.path.join(folder, 'plain.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+
+    with mock.patch.object(Photo, 'set_album', return_value=False):
+        result = CliRunner().invoke(elodie._update, ['--album', 'Trip', dest_path])
+
+    assert result.exit_code == 1, result.output
+    assert 'Failed to update album' in result.output, result.output
+    assert _library_files(folder_destination) == [os.path.relpath(dest_path, folder_destination)]
+
+@pytest.mark.parametrize('command', ['import', 'update'])
+def test_unexpected_error_for_one_file_does_not_stop_the_run(command):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    for name in ('plain.jpg', 'with-title.jpg'):
+        shutil.copyfile(helper.get_file(name), os.path.join(folder, name))
+    if command == 'update':
+        # The files in the library are updated
+        CliRunner().invoke(elodie._import, ['--destination', folder_destination, folder])
+        folder = os.path.join(folder_destination, '2015-12-Dec', 'Unknown Location')
+    broken = [f for f in os.listdir(folder) if 'plain' in f][0]
+    process_file = elodie.FILESYSTEM.process_file
+
+    def fail_for_broken(_file, *args, **kwargs):
+        if os.path.basename(_file) == broken:
+            raise RuntimeError('broken file')
+        return process_file(_file, *args, **kwargs)
+
+    with mock.patch.object(elodie.FILESYSTEM, 'process_file', side_effect=fail_for_broken):
+        if command == 'import':
+            result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, folder])
+        else:
+            result = CliRunner().invoke(elodie._update, ['--title', 'new', folder])
+
+    assert result.exit_code == 1, result.output
+    assert not isinstance(result.exception, RuntimeError), result.exception
+    assert 'Could not process %s: RuntimeError: broken file' % os.path.join(folder, broken) in result.output, result.output
+    assert 'Success                        1' in result.output, result.output
+    assert 'Error                          1' in result.output, result.output
+
+@pytest.mark.parametrize('path,directory,expected', [
+    ('/a/b/c.jpg', '/a/b', True),
+    ('/a/b/c/d.jpg', '/a/b', True),
+    ('/a/bc/d.jpg', '/a/b', False),
+    ('/a/c.jpg', '/a/b', False),
+    ('/a/b', '/a/b', False),
+    ('/a/b/../c.jpg', '/a/b', False),
+])
+def test_is_in_directory(path, directory, expected):
+    assert elodie.is_in_directory(path, directory) is expected

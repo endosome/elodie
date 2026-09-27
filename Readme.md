@@ -380,6 +380,10 @@ Files are named and put in folders by the time they were taken, the same on ever
 
 If a camera's clock was wrong, correct the time with `./elodie.py update --time`.
 
+#### Files which can't store metadata
+
+ExifTool can't write MP3, FLAC, OGG and Opus audio files and MKV and WebM videos. Elodie reads their dates, but can't store an album, title, location, date or the original file name in them. It reports this when importing or updating them. An album from `--album-from-folder` is then only part of their folder, a later `update` moves them out of it.
+
 ### Reorganize by changing location and dates
 
 If you notice some photos were incorrectly organized you should definitely let me know. In the example above I put two photos into an *Unknown Location* folder because I didn't find GPS information in their EXIF. To fix this I'll help you add GPS information into the photos' EXIF and then I'll reorganize them.

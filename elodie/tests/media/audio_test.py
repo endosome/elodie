@@ -228,3 +228,16 @@ def test_get_date_taken_falls_back_to_modification_time(value):
     shutil.rmtree(folder)
 
     assert date_taken == time.gmtime(1584273600), date_taken
+
+@pytest.mark.parametrize('file_name', ['audio.mp3', 'audio.flac', 'audio.ogg', 'audio.opus'])
+def test_setters_report_files_which_cannot_be_written(file_name):
+    # ExifTool cannot write these formats, see the Readme
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, file_name)
+    shutil.copyfile(helper.get_file(file_name), origin)
+    audio = Audio(origin)
+
+    results = [audio.set_album('Trip'), audio.set_title('Title'), audio.set_location(11.1, 99.9),
+               audio.set_date_taken(datetime.datetime(2021, 7, 1)), audio.set_original_name('a.mp3')]
+
+    assert results == [False] * 5, results

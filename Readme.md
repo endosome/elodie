@@ -85,7 +85,9 @@ docker run --rm --user "$(id -u):$(id -g)" -e TZ=Europe/Warsaw \
 * `--user` makes the files Elodie creates belong to you instead of the user of the image.
 * `TZ` should be your time zone. The date of a file without a date in its metadata, or of a video without a GPS position, is in the time zone of the computer, which is UTC in a container.
 * `/elodie` keeps the hash and location databases and your `config.ini` (see below), mount a folder there so they are kept. The paths in the hash database are the ones in the container, mount your photos at the same path every time.
+* Elodie warns when `/elodie` is not mounted or `TZ` is not set.
 * `--trash` moves files to a `.Trash-<user id>` folder in the mounted folder.
+* `docker stop` stops Elodie like Ctrl-C. A file which was being copied is not left incomplete in the library, the next import copies it again.
 * A MapQuest key can be set with `-e ELODIE_MAPQUEST_KEY=...` instead of `config.ini`.
 
 `docker build --target dev -t elodie-dev .` builds an image with the tests: `docker run --rm elodie-dev pytest elodie/tests -n auto --dist loadgroup`.

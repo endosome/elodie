@@ -79,17 +79,19 @@ RUN rm -rf /src/elodie/tests
 FROM base AS runtime
 
 COPY --from=source /src /opt/elodie
+COPY docker/entrypoint.sh /usr/local/bin/elodie-entrypoint
 
 # Elodie keeps its hash and location databases and config.ini in this
-#  folder, mount it to keep them. The user can be changed with --user so
-#  the files it creates belong to the user who runs it.
+#  folder, mount it to keep them. There is no VOLUME: a new anonymous volume
+#  for every run would lose them without notice, the entrypoint warns
+#  instead. The user can be changed with --user so the files it creates
+#  belong to the user who runs it.
 ENV ELODIE_APPLICATION_DIRECTORY=/elodie
 RUN useradd --create-home --uid 1000 elodie && \
     mkdir /elodie && \
     chown elodie:elodie /elodie && \
     chmod 777 /elodie
 USER elodie
-VOLUME /elodie
 
-ENTRYPOINT ["python", "/opt/elodie/elodie.py"]
+ENTRYPOINT ["elodie-entrypoint"]
 CMD ["--help"]

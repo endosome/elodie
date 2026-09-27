@@ -174,3 +174,14 @@ jobs:
           test ! -e photos/new/plain.jpg
           test -f app/hash.json
           run verify
+
+      - name: Warn when the databases are not mounted or TZ is not set
+        run: |
+          mkdir -p new
+          cp elodie/tests/files/plain.jpg new/
+          docker run --rm -v "$PWD/new:/new" elodie import --dry-run --destination /library /new 2> warnings.txt
+          cat warnings.txt
+          grep -q '/elodie is not mounted' warnings.txt
+          grep -q 'TZ is not set' warnings.txt
+          docker run --rm --user "$(id -u):$(id -g)" -e TZ=Europe/Warsaw -v "$PWD/app:/elodie" -v "$PWD/new:/new" elodie import --dry-run --destination /library /new 2> warnings.txt
+          test ! -s warnings.txt

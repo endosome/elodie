@@ -73,8 +73,8 @@ class Photo(Media):
                         seconds_since_epoch = time.mktime(time_tuple)
                         break
             except BaseException as e:
-                log.error(e)
-                pass
+                # i.e. 0000:00:00 00:00:00, the next key is used
+                log.info('Invalid date in %s: %s' % (key, e))
 
         if(seconds_since_epoch == 0):
             return None

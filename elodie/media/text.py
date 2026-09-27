@@ -202,8 +202,8 @@ class Text(Base):
             if isinstance(parsed_json, dict):
                 self.metadata_line = parsed_json
         except ValueError:
-            log.error('Could not parse JSON from first line: %s' % first_line)
-            pass
+            # A text file without metadata
+            log.info('Could not parse JSON from first line: %s' % first_line)
 
     def write_metadata(self, **kwargs):
         if len(kwargs) == 0:

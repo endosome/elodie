@@ -6,6 +6,8 @@ import unittest
 
 from json import dumps
 from unittest.mock import patch
+
+import pytest
 from io import StringIO
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))))
@@ -28,52 +30,47 @@ def call_log_and_assert(func, args, expected):
 def with_new_line(string):
     return "{}\n".format(string)
 
-@patch('elodie.log')
-@patch('elodie.constants.debug', True)
-def test_calls_print_debug_true(fake_log):
-    expected = 'some string'
-    fake_log.info.return_value = expected
-    fake_log.warn.return_value = expected
-    fake_log.error.return_value = expected
-    for func in [log.info, log.warn, log.error]:
-        call_log_and_assert(func, [expected], with_new_line(expected))
+@pytest.mark.parametrize('debug', [True, False])
+def test_info_and_warn_are_only_shown_with_debug(capsys, debug):
+    with patch('elodie.constants.debug', debug):
+        log.info('some info')
+        log.warn('some warning')
+        log.info_json({'foo': 'bar'})
+        log.warn_json({'foo': 'bar'})
+    out, err = capsys.readouterr()
 
-    expected_json = {'foo':'bar'}
-    fake_log.info.return_value = expected_json
-    fake_log.warn.return_value = expected_json
-    fake_log.error.return_value = expected_json
-    for func in [log.info_json, log.warn_json, log.error_json]:
-        call_log_and_assert(func, [expected_json], with_new_line(dumps(expected_json)))
+    expected = 'some info\nsome warning\n{0}\n{0}\n'.format(dumps({'foo': 'bar'}))
+    assert out == (expected if debug else ''), out
+    assert err == '', err
 
-@patch('elodie.log')
-@patch('elodie.constants.debug', False)
-def test_calls_print_debug_false(fake_log):
+@pytest.mark.parametrize('debug', [True, False])
+def test_errors_are_shown_on_stderr_in_all_modes(capsys, debug):
+    with patch('elodie.constants.debug', debug):
+        log.error('some error')
+        log.error_json({'foo': 'bar'})
+    out, err = capsys.readouterr()
+
+    assert out == '', out
+    assert err == 'some error\n{}\n'.format(dumps({'foo': 'bar'})), err
+
+def test_characters_which_cannot_be_printed_are_replaced(capsys):
+    # i.e. a terminal without UTF-8
+    real_print = print
+
+    def print_ascii(*args, **kwargs):
+        ''.join(str(a) for a in args).encode('ascii')
+        real_print(*args, **kwargs)
+
+    with patch('builtins.print', side_effect=print_ascii):
+        log.error('café')
+    out, err = capsys.readouterr()
+
+    assert err == 'caf?\n', err
+
+def test_calls_print_progress_no_new_line():
     expected = 'some other string'
-    fake_log.info.return_value = expected
-    fake_log.warn.return_value = expected
-    fake_log.error.return_value = expected
-    for func in [log.info, log.warn, log.error]:
-        call_log_and_assert(func, [expected], '')
-
-    expected_json = {'foo':'bar'}
-    fake_log.info.return_value = expected_json
-    fake_log.warn.return_value = expected_json
-    fake_log.error.return_value = expected_json
-    for func in [log.info_json, log.warn_json, log.error_json]:
-        call_log_and_assert(func, [expected_json], '')
-
-@patch('elodie.log')
-def test_calls_print_progress_no_new_line(fake_log):
-    expected = 'some other string'
-    fake_log.info.return_value = expected
-    fake_log.warn.return_value = expected
-    fake_log.error.return_value = expected
     call_log_and_assert(log.progress, [expected], expected)
 
-@patch('elodie.log')
-def test_calls_print_progress_with_new_line(fake_log):
+def test_calls_print_progress_with_new_line():
     expected = "some other string\n"
-    fake_log.info.return_value = expected
-    fake_log.warn.return_value = expected
-    fake_log.error.return_value = expected
     call_log_and_assert(log.progress, [expected, True], with_new_line(expected))

@@ -4,6 +4,7 @@ Methods for interacting with information Elodie caches about stored media.
 
 import atexit
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -27,7 +28,18 @@ WRITE_EVERY_CHANGES = 100
 WRITE_EVERY_SECONDS = 10
 
 
+#: The errors of a lock which another process holds.
+LOCKED_ERRORS = (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES,
+                 getattr(errno, 'EDEADLOCK', errno.EDEADLK))
+
+
 def _try_lock(lock_file):
+    """Try to lock a file.
+
+    :returns: True if it is locked now, False if another process holds the
+        lock, None if the file system does not support locks, i.e. some
+        network shares.
+    """
     try:
         if sys.platform == 'win32':
             import msvcrt
@@ -37,8 +49,26 @@ def _try_lock(lock_file):
             import fcntl
             fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return True
+    except OSError as e:
+        if e.errno in LOCKED_ERRORS:
+            return False
+        return None
+
+
+def _sync_directory(directory):
+    """Make a rename in a directory durable, the fsync of the file only
+    covers its content. Not possible on Windows.
+    """
+    try:
+        handle = os.open(directory, os.O_RDONLY)
     except OSError:
-        return False
+        return
+    try:
+        os.fsync(handle)
+    except OSError:
+        pass
+    finally:
+        os.close(handle)
 
 
 class Db(object):
@@ -131,11 +161,17 @@ class Db(object):
             os.makedirs(directory)
         lock_file = open(os.path.join(directory, 'elodie.lock'), 'a')
         try:
-            if not _try_lock(lock_file):
+            locked = _try_lock(lock_file)
+            if locked is False:
                 print('Waiting for another elodie which uses %s to finish...'
                       % directory, file=sys.stderr, flush=True)
-                while not _try_lock(lock_file):
+                while locked is False:
                     time.sleep(1)
+                    locked = _try_lock(lock_file)
+            if locked is None:
+                log.error('Could not lock %s, the file system does not '
+                          'support it. Do not run elodie twice at the same '
+                          'time.' % directory)
             # Another run may have changed them
             cls.reset_shared()
             try:
@@ -207,6 +243,8 @@ class Db(object):
                 mode = 0o666 & ~umask
             os.chmod(temporary_path, mode)
             os.replace(temporary_path, path)
+            if durable:
+                _sync_directory(os.path.dirname(path) or '.')
         except BaseException:
             if os.path.exists(temporary_path):
                 os.remove(temporary_path)

@@ -380,9 +380,11 @@ def test_only_the_last_write_of_a_run_is_durable():
         flush_fsyncs = fsync.call_count
         db.flush()
 
+    # The file and, except on Windows, its directory for the rename
+    durable_fsyncs = 1 if helper.is_windows() else 2
     assert periodic_fsyncs == 0, periodic_fsyncs
-    assert flush_fsyncs == 1, flush_fsyncs
-    assert fsync.call_count == 1, fsync.call_count
+    assert flush_fsyncs == durable_fsyncs, flush_fsyncs
+    assert fsync.call_count == durable_fsyncs, fsync.call_count
     assert _read_json(constants.hash_db()) == {'key1': 'value', 'key2': 'value'}
 
 @mock.patch('elodie.constants.dry_run', True)
@@ -538,3 +540,51 @@ def test_lock_is_released_after_an_error():
 
     with open(os.path.join(constants.application_directory(), 'elodie.lock'), 'a') as lock_file:
         assert _try_lock(lock_file)
+
+@pytest.mark.skipif(helper.is_windows(), reason='The lock is tested with flock')
+def test_try_lock():
+    from elodie.localstorage import _try_lock
+    path = os.path.join(constants.application_directory(), 'elodie.lock')
+    with open(path, 'a') as first, open(path, 'a') as second:
+        locked = _try_lock(first)
+        # Held by another run
+        busy = _try_lock(second)
+
+    assert locked is True
+    assert busy is False
+
+@pytest.mark.skipif(helper.is_windows(), reason='The lock is tested with flock')
+def test_lock_on_a_file_system_without_locks(capsys):
+    # i.e. some network shares, it waited forever for another run
+    import errno
+    with mock.patch('fcntl.flock', side_effect=OSError(errno.ENOLCK, 'No locks available')):
+        with Db.lock():
+            db = Db.shared()
+            db.add_hash('key', 'value')
+            db.update_hash_db(periodically=True)
+
+    err = capsys.readouterr().err
+    assert 'Could not lock' in err, err
+    assert 'Waiting' not in err, err
+    assert _read_json(constants.hash_db()) == {'key': 'value'}
+
+@pytest.mark.skipif(not os.path.isdir('/proc/self/fd'), reason='Needs /proc to see what is synced')
+def test_durable_write_syncs_the_directory():
+    # The rename of the new file is only durable with its directory
+    db = Db()
+    db.add_hash('key', 'value')
+    synced = []
+    fsync = os.fsync
+
+    def record(handle):
+        synced.append(os.path.isdir('/proc/self/fd/%d' % handle))
+        fsync(handle)
+    with mock.patch('elodie.localstorage.os.fsync', side_effect=record):
+        db.update_hash_db()
+        durable = list(synced)
+        db.add_hash('other', 'value')
+        db.update_hash_db(periodically=True)
+
+    # The file, then its directory; a periodic write is not synced
+    assert durable == [False, True], durable
+    assert synced == durable, synced

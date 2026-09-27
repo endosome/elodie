@@ -1,10 +1,12 @@
 # Project imports
 import importlib.util
+import json
 import unittest.mock as mock
 import os
 import sys
 import shutil
 import subprocess
+import tempfile
 import time
 
 from click.testing import CliRunner
@@ -2384,3 +2386,97 @@ def test_import_apple_double_file_given_explicitly():
     assert result.exit_code == 1, result.output
     assert 'Error                          1' in result.output, result.output
     assert _files_in(folder_destination) == []
+
+def test_import_loads_and_writes_the_hash_db_once():
+    # For each file the databases were loaded and hash.json was written,
+    #  which took seconds per file for a large library
+    from elodie.localstorage import Db
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    for i in range(5):
+        with open(os.path.join(folder, 'photo%d.jpg' % i), 'wb') as f:
+            f.write(open(helper.get_file('plain.jpg'), 'rb').read() + str(i).encode())
+
+    with mock.patch.object(Db, '_load', wraps=Db._load) as load, \
+            mock.patch.object(Db, '_write', wraps=Db._write) as write:
+        result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, folder])
+    hash_db_writes = [c for c in write.call_args_list if c[0][0].endswith('hash.json')]
+    with open(Db().hash_db_path) as f:
+        hash_db = json.load(f)
+
+    assert 'Success                        5' in result.output, result.output
+    # hash.json and location.json
+    assert load.call_count == 2, load.call_args_list
+    assert len(hash_db_writes) == 1, hash_db_writes
+    # The checksums of the sources and of the copies
+    assert len(set(hash_db.values())) == 5, hash_db
+
+@mock.patch('elodie.localstorage.WRITE_EVERY_CHANGES', 1000)
+@mock.patch('elodie.localstorage.WRITE_EVERY_SECONDS', 3600)
+@mock.patch.object(elodie, 'send2trash')
+def test_import_duplicate_in_the_same_run_before_the_hash_db_is_written(mock_send2trash):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'a.jpg'))
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'b.jpg'))
+
+    result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, '--trash', folder])
+
+    assert 'Success                        1' in result.output, result.output
+    assert 'Duplicate, not imported        1' in result.output, result.output
+    # The duplicate is in the library so both are moved to the trash
+    assert mock_send2trash.call_count == 2, mock_send2trash.call_args_list
+
+@mock.patch('elodie.constants.dry_run', False)
+def test_import_dry_run_reports_the_hash_db_update_once():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    for i in range(3):
+        with open(os.path.join(folder, 'photo%d.jpg' % i), 'wb') as f:
+            f.write(open(helper.get_file('plain.jpg'), 'rb').read() + str(i).encode())
+
+    result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, '--dry-run', folder])
+
+    assert result.output.count('[DRY-RUN] Would update hash database with 3 entries') == 1, result.output
+
+@pytest.mark.skipif(helper.is_windows(), reason='Ctrl+C cannot be sent to a process group on Windows')
+def test_ctrl_c_keeps_the_files_imported_before_in_the_hash_db():
+    # The hash db is written periodically, what was imported before Ctrl+C
+    #  is written when elodie exits
+    import signal
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    for name in ('a.jpg', 'b.jpg', 'c.jpg'):
+        with open(os.path.join(folder, name), 'wb') as f:
+            f.write(open(helper.get_file('plain.jpg'), 'rb').read() + name.encode())
+    application_directory = tempfile.mkdtemp()
+    script = (
+        'import runpy, sys, time, elodie.filesystem as f\n'
+        'process_file = f.FileSystem.process_file\n'
+        'def blocking(self, _file, *a, **k):\n'
+        '    if _file.endswith("c.jpg"):\n'
+        '        print("started", flush=True)\n'
+        '        time.sleep(60)\n'
+        '    return process_file(self, _file, *a, **k)\n'
+        'f.FileSystem.process_file = blocking\n'
+        'sys.argv = sys.argv[1:]\n'
+        'runpy.run_path(sys.argv[0], run_name="__main__")\n'
+    )
+    process = subprocess.Popen(
+        [sys.executable, '-c', script, elodie_path, 'import', '--destination', folder_destination, folder],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True,
+        cwd=os.path.dirname(elodie_path), env=dict(os.environ, ELODIE_APPLICATION_DIRECTORY=application_directory))
+    try:
+        while process.stdout.readline().strip() != 'started':
+            pass
+        os.killpg(process.pid, signal.SIGINT)
+        output, _ = process.communicate(timeout=30)
+    finally:
+        process.kill()
+    with open(os.path.join(application_directory, 'hash.json')) as f:
+        hash_db = json.load(f)
+    shutil.rmtree(application_directory)
+
+    assert process.returncode == 1, output
+    # a.jpg and b.jpg, with the checksums of the sources and of the copies
+    assert len(set(hash_db.values())) == 2, hash_db

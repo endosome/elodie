@@ -67,6 +67,9 @@ def setup_test_environment():
         del load_config.config
     geolocation.__KEY__ = None
     geolocation.__PREFER_ENGLISH_NAMES__ = None
+    # The shared Db belongs to the application directory of one test
+    from elodie.localstorage import Db
+    Db._shared = None
 
     # Get the test directory
     test_directory = os.path.dirname(os.path.abspath(__file__))
@@ -102,7 +105,14 @@ def setup_test_environment():
     
     # Yield control to tests
     yield
-    
+
+    # What the test changed in the shared Db is written while its
+    #  application directory still exists
+    try:
+        Db.reset_shared()
+    except OSError:
+        Db._shared = None
+
     # Cleanup after each test
     try:
         shutil.rmtree(temporary_application_directory)

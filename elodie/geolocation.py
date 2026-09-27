@@ -36,7 +36,7 @@ __PLACE_NAME_PARTS__ = ('city', 'town', 'state', 'country')
 
 def coordinates_by_name(name):
     # Try to get cached location first
-    db = Db()
+    db = Db.shared()
     cached_coordinates = db.get_location_coordinates(name)
     if(cached_coordinates is not None):
         return {
@@ -249,7 +249,7 @@ def place_name(lat, lon):
         lon = float(lon)
 
     # Try to get cached location first
-    db = Db()
+    db = Db.shared()
     # 3km distace radious for a match
     cached_place_name = db.get_location_name(lat, lon, 3000)
     # We check that it's a dict to coerce an upgrade of the location
@@ -283,7 +283,7 @@ def place_name(lat, lon):
     if(lookup_place_name):
         db.add_location(lat, lon, lookup_place_name)
         # TODO: Maybe this should only be done on exit and not for every write.
-        db.update_location_db()
+        db.update_location_db(periodically=True)
 
     if('default' not in lookup_place_name):
         lookup_place_name = lookup_place_name_default

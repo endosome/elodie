@@ -225,7 +225,8 @@ def get_imported_path(_file):
 
     :returns: str or None
     """
-    db = Db()
+    # The shared Db knows the files imported earlier in this run
+    db = Db.shared()
     checksum_file = db.get_hash(db.checksum(_file))
     if (checksum_file is not None and os.path.isfile(checksum_file) and
             os.path.abspath(checksum_file) != os.path.abspath(_file)):
@@ -423,6 +424,8 @@ def _import(destination, source, file, album_from_folder, trash, allow_duplicate
         has_errors = has_errors or status is False
         has_errors = report_live_photo_videos(result) or has_errors
 
+    # The databases are written periodically, the rest before the summary
+    Db.flush_shared()
     result.write()
 
     if has_errors:
@@ -445,7 +448,7 @@ def _generate_db(source, debug):
         log.error('Source is not a valid directory %s' % source)
         sys.exit(1)
         
-    db = Db()
+    db = Db.shared()
     db.backup_hash_db()
     db.reset_hash_db()
 
@@ -467,7 +470,7 @@ def _verify(debug):
     """
     constants.debug = debug
     result = Result()
-    db = Db()
+    db = Db.shared()
     # A file can have more than one checksum: the one of the source it was
     #  imported from (to find duplicates) and the one of its content after
     #  its metadata was written.
@@ -761,6 +764,8 @@ def _update(album, location, time, title, paths, debug, dry_run):
         has_errors = has_errors or not status
         has_errors = report_live_photo_videos(result) or has_errors
 
+    # The databases are written periodically, the rest before the summary
+    Db.flush_shared()
     result.write()
 
     if has_errors:

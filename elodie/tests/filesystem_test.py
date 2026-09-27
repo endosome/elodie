@@ -2370,7 +2370,7 @@ def test_process_file_does_not_replace_a_different_file_with_the_same_name():
     dest_a = filesystem.process_file(a, library, Photo(a))
     dest_b = filesystem.process_file(b, library, Photo(b))
     descriptions = [Photo(p).get_description() for p in (dest_a, dest_b)]
-    hashes = Db().hash_db
+    hashes = Db.shared().hash_db
 
     assert dest_b == os.path.splitext(dest_a)[0] + '-1.jpg', (dest_a, dest_b)
     assert descriptions == ['camera A', 'camera B'], descriptions

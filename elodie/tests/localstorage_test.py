@@ -315,3 +315,155 @@ def test_interrupted_write_keeps_the_hash_db():
 
     assert Db().hash_db == {'abc': '/photos/a.jpg'}
     assert not os.path.exists(constants.hash_db() + '.tmp')
+
+def _read_json(path):
+    import json
+    with open(path) as f:
+        content = f.read()
+    return json.loads(content) if content.strip() else None
+
+@mock.patch('elodie.localstorage.WRITE_EVERY_CHANGES', 3)
+@mock.patch('elodie.localstorage.WRITE_EVERY_SECONDS', 3600)
+def test_update_hash_db_periodically_after_changes():
+    db = Db()
+    written = []
+    for i in range(4):
+        db.add_hash('key%d' % i, 'value')
+        db.update_hash_db(periodically=True)
+        written.append(len(_read_json(constants.hash_db()) or {}))
+    db.flush()
+
+    # Written with the 3rd change, the 4th by flush()
+    assert written == [0, 0, 3, 3], written
+    assert len(_read_json(constants.hash_db())) == 4
+
+@mock.patch('elodie.localstorage.WRITE_EVERY_CHANGES', 1000)
+@mock.patch('elodie.localstorage.WRITE_EVERY_SECONDS', 0)
+def test_update_hash_db_periodically_after_seconds():
+    db = Db()
+    db.add_hash('key', 'value')
+    db.update_hash_db(periodically=True)
+
+    assert _read_json(constants.hash_db()) == {'key': 'value'}
+
+@mock.patch('elodie.localstorage.WRITE_EVERY_CHANGES', 3)
+@mock.patch('elodie.localstorage.WRITE_EVERY_SECONDS', 3600)
+def test_update_location_db_periodically():
+    db = Db()
+    db.add_location(1.0, 2.0, 'Somewhere')
+    db.update_location_db(periodically=True)
+    before_flush = _read_json(constants.location_db())
+    db.flush()
+
+    assert before_flush is None, before_flush
+    assert _read_json(constants.location_db()) == [{'lat': 1.0, 'long': 2.0, 'name': 'Somewhere'}]
+
+def test_flush_without_changes_does_not_write():
+    db = Db()
+    with mock.patch.object(Db, '_write') as write:
+        db.flush()
+
+    write.assert_not_called()
+
+@mock.patch('elodie.localstorage.WRITE_EVERY_CHANGES', 1)
+def test_only_the_last_write_of_a_run_is_durable():
+    # fsync takes seconds for a large database, periodic writes skip it
+    db = Db()
+    with mock.patch('elodie.localstorage.os.fsync') as fsync:
+        db.add_hash('key1', 'value')
+        db.update_hash_db(periodically=True)
+        db.add_hash('key2', 'value')
+        db.update_hash_db(periodically=True)
+        periodic_fsyncs = fsync.call_count
+        # Nothing is pending but it is not on the disk durably yet
+        db.flush()
+        flush_fsyncs = fsync.call_count
+        db.flush()
+
+    assert periodic_fsyncs == 0, periodic_fsyncs
+    assert flush_fsyncs == 1, flush_fsyncs
+    assert fsync.call_count == 1, fsync.call_count
+    assert _read_json(constants.hash_db()) == {'key1': 'value', 'key2': 'value'}
+
+@mock.patch('elodie.constants.dry_run', True)
+@mock.patch('elodie.localstorage.WRITE_EVERY_CHANGES', 1)
+def test_update_hash_db_periodically_dry_run(capsys):
+    db = Db()
+    db.add_hash('key', 'value')
+    db.update_hash_db(periodically=True)
+    db.add_hash('other', 'value')
+    db.update_hash_db(periodically=True)
+    db.flush()
+    db.flush()
+
+    assert _read_json(constants.hash_db()) is None
+    # Reported once, at the end
+    assert capsys.readouterr().out.count('Would update hash database with 2 entries') == 1
+
+def test_shared_is_loaded_once():
+    with mock.patch.object(Db, '_load', wraps=Db._load) as load:
+        db1 = Db.shared()
+        db2 = Db.shared()
+
+    assert db1 is db2
+    # hash.json and location.json
+    assert load.call_count == 2, load.call_args_list
+
+def test_shared_changes_with_application_directory(monkeypatch, tmp_path):
+    db1 = Db.shared()
+    db1.add_hash('key', 'value')
+    db1.update_hash_db(periodically=True)
+    first_hash_db = constants.hash_db()
+
+    monkeypatch.setenv('ELODIE_APPLICATION_DIRECTORY', str(tmp_path))
+    db2 = Db.shared()
+
+    assert db1 is not db2
+    assert db2.hash_db_path == str(tmp_path / 'hash.json')
+    # The changes of the previous one were written
+    assert _read_json(first_hash_db) == {'key': 'value'}
+
+def test_shared_is_written_when_elodie_exits():
+    # i.e. after an error or Ctrl+C, without flush_shared()
+    import subprocess
+    code = (
+        'import sys; sys.path.insert(0, {root!r})\n'
+        'from elodie.localstorage import Db\n'
+        'db = Db.shared()\n'
+        'db.add_hash("key", "value")\n'
+        'db.update_hash_db(periodically=True)\n'
+        'raise KeyboardInterrupt\n'
+    ).format(root=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True,
+                            env=dict(os.environ, ELODIE_APPLICATION_DIRECTORY=constants.application_directory()))
+
+    assert result.returncode != 0
+    assert _read_json(constants.hash_db()) == {'key': 'value'}
+
+def test_move_hashes():
+    db = Db()
+    db.add_hash('source', '/library/a.jpg')
+    db.add_hash('content', '/library/a.jpg')
+    db.add_hash('other', '/library/b.jpg')
+
+    db.move_hashes('/library/a.jpg', '/library/c.jpg')
+    # A hash added after the index was built
+    db.add_hash('new', '/library/c.jpg')
+    db.move_hashes('/library/c.jpg', '/library/d.jpg')
+
+    assert db.hash_db == {'source': '/library/d.jpg', 'content': '/library/d.jpg',
+                          'new': '/library/d.jpg', 'other': '/library/b.jpg'}, db.hash_db
+
+def test_move_hashes_does_not_look_through_all_hashes_for_each_file():
+    # For a large library update was slow
+    db = Db()
+    for i in range(1000):
+        db.add_hash('key%d' % i, '/library/%d.jpg' % i)
+    db.move_hashes('/library/0.jpg', '/library/moved-0.jpg')
+
+    with mock.patch('elodie.localstorage.os.path.abspath', wraps=os.path.abspath) as abspath:
+        for i in range(1, 11):
+            db.move_hashes('/library/%d.jpg' % i, '/library/moved-%d.jpg' % i)
+
+    assert abspath.call_count < 100, abspath.call_count
+    assert db.get_hash('key5') == '/library/moved-5.jpg'

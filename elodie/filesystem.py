@@ -674,7 +674,7 @@ class FileSystem(object):
         return folder_name
 
     def process_checksum(self, _file, allow_duplicate):
-        db = Db()
+        db = Db.shared()
         checksum = db.checksum(_file)
 
         # If duplicates are not allowed then we check if we've seen this file
@@ -728,7 +728,7 @@ class FileSystem(object):
             return None
 
         # Its copy has metadata written to it, i.e. its original name
-        imported_path = Db().get_hash(checksum) if checksum else None
+        imported_path = Db.shared().get_hash(checksum) if checksum else None
 
         base, extension = os.path.splitext(dest_path)
         candidate = dest_path
@@ -838,7 +838,9 @@ class FileSystem(object):
             self.imported_sidecars = self.process_sidecars(
                 _file, dest_path, move=False)
 
-        db = Db()
+        # Written periodically and at the end of the run, writing a large
+        #  hash db for each file is slow
+        db = Db.shared()
         if move is True:
             # The checksums of the file, i.e. of the source it was imported
             #  from to find duplicates, belong to its new path.
@@ -850,7 +852,7 @@ class FileSystem(object):
             content_checksum = db.checksum(dest_path)
             if content_checksum != checksum:
                 db.add_hash(content_checksum, dest_path)
-        db.update_hash_db()
+        db.update_hash_db(periodically=True)
 
         # Run `after()` for every loaded plugin and if any of them raise an exception
         #  then we skip importing the file and log a message.

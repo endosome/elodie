@@ -2,10 +2,12 @@
 Methods for interacting with information Elodie caches about stored media.
 """
 
+import atexit
 import hashlib
 import json
 import os
 import sys
+import time
 
 from math import radians, cos, sqrt
 from shutil import copyfile
@@ -15,9 +17,24 @@ from elodie import constants
 from elodie import log
 
 
+#: The shared Db is written to disk after this many changes or seconds, and
+#:  at the end of a run. Writing hash.json for each file took seconds per file
+#:  with hundreds of thousands of files in the library.
+WRITE_EVERY_CHANGES = 100
+WRITE_EVERY_SECONDS = 10
+
+
 class Db(object):
 
-    """A class for interacting with the JSON files created by Elodie."""
+    """A class for interacting with the JSON files created by Elodie.
+
+    Each instance loads the databases from disk. Db.shared() is the one
+    instance of a run, i.e. an import, which loads them once and writes them
+    periodically.
+    """
+
+    #: The instance returned by Db.shared()
+    _shared = None
 
     def __init__(self):
         # verify that the application directory (~/.elodie) exists,
@@ -41,6 +58,49 @@ class Db(object):
 
         self.location_db = self._load(constants.location_db(), [])
 
+        self.hash_db_path = constants.hash_db()
+        self.location_db_path = constants.location_db()
+        # Changes which are not written yet, see update_hash_db()
+        self.pending_changes = {'hash': 0, 'location': 0}
+        self.last_write = {'hash': time.time(), 'location': time.time()}
+        # Written periodically, without fsync, since the last durable write
+        self.written_not_durable = {'hash': False, 'location': False}
+        # Checksums by path, see move_hashes()
+        self.paths = None
+
+    @classmethod
+    def shared(cls):
+        """Get the Db of the run, which loads the databases once and writes
+        them periodically instead of for each file. Its changes are written
+        by flush_shared() at the end of the run or when elodie exits.
+
+        :returns: Db
+        """
+        if (cls._shared is None or
+                cls._shared.hash_db_path != constants.hash_db()):
+            # The application directory changed, i.e. in tests
+            cls.flush_shared()
+            cls._shared = cls()
+        return cls._shared
+
+    @classmethod
+    def flush_shared(cls):
+        """Write the changes of the shared Db to disk."""
+        if cls._shared is not None:
+            cls._shared.flush()
+
+    @classmethod
+    def reset_shared(cls):
+        """Write the changes of the shared Db and forget it."""
+        cls.flush_shared()
+        cls._shared = None
+
+    def flush(self):
+        """Write the databases with changes to disk, durably."""
+        for name in ('hash', 'location'):
+            if self.pending_changes[name] or self.written_not_durable[name]:
+                self._update(name, periodically=False, change=False)
+
     @staticmethod
     def _load(path, empty):
         """Load a database. One which cannot be read, i.e. after a crash
@@ -63,14 +123,21 @@ class Db(object):
             return empty
 
     @staticmethod
-    def _write(path, data):
+    def _write(path, data, durable=True):
         """Write a database to another file which then replaces it, so a
         write which is interrupted (i.e. Ctrl-C) does not corrupt it.
+
+        :param bool durable: Also wait until it is on the disk (fsync) so it
+            survives a power failure. That takes seconds for a large
+            database, the periodic writes of a run skip it.
         """
         temporary_path = path + '.tmp'
         try:
             with open(temporary_path, 'w') as f:
                 json.dump(data, f)
+                if durable:
+                    f.flush()
+                    os.fsync(f.fileno())
             os.replace(temporary_path, path)
         except BaseException:
             if os.path.exists(temporary_path):
@@ -85,6 +152,8 @@ class Db(object):
         :param bool write: If true, write the hash db to disk.
         """
         self.hash_db[key] = value
+        if self.paths is not None:
+            self.paths.setdefault(os.path.abspath(value), set()).add(key)
         if(write is True):
             self.update_hash_db()
 
@@ -94,10 +163,16 @@ class Db(object):
         :param str old_path:
         :param str new_path:
         """
+        if self.paths is None:
+            # Built once, looking through all hashes for each moved file is
+            #  slow for a large library
+            self.paths = {}
+            for key, value in self.hash_db.items():
+                self.paths.setdefault(os.path.abspath(value), set()).add(key)
         old_path = os.path.abspath(old_path)
-        for key, value in self.hash_db.items():
-            if os.path.abspath(value) == old_path:
-                self.hash_db[key] = new_path
+        for key in self.paths.pop(old_path, set()):
+            if os.path.abspath(self.hash_db.get(key, '')) == old_path:
+                self.add_hash(key, new_path)
 
     # Location database
     # Currently quite simple just a list of long/lat pairs with a name
@@ -222,17 +297,53 @@ class Db(object):
 
     def reset_hash_db(self):
         self.hash_db = {}
+        self.paths = None
 
-    def update_hash_db(self):
-        """Write the hash db to disk."""
-        if constants.dry_run:
-            print(f"[DRY-RUN] Would update hash database with {len(self.hash_db)} entries")
-            return
-        self._write(constants.hash_db(), self.hash_db)
+    def update_hash_db(self, periodically=False):
+        """Write the hash db to disk.
 
-    def update_location_db(self):
-        """Write the location db to disk."""
+        :param bool periodically: Only write it after WRITE_EVERY_CHANGES
+            changes or WRITE_EVERY_SECONDS seconds, flush() writes the rest.
+        """
+        self._update('hash', periodically)
+
+    def update_location_db(self, periodically=False):
+        """Write the location db to disk.
+
+        :param bool periodically: See update_hash_db().
+        """
+        self._update('location', periodically)
+
+    def _update(self, name, periodically, change=True):
+        if change:
+            self.pending_changes[name] += 1
         if constants.dry_run:
-            print(f"[DRY-RUN] Would update location database with {len(self.location_db)} entries")
+            # What would be written is reported once, at the end of a run
+            if not periodically and self.pending_changes[name]:
+                database = self.hash_db if name == 'hash' else self.location_db
+                print(f"[DRY-RUN] Would update {name} database with "
+                      f"{len(database)} entries")
+                self.pending_changes[name] = 0
             return
-        self._write(constants.location_db(), self.location_db)
+
+        if (periodically and
+                self.pending_changes[name] < WRITE_EVERY_CHANGES and
+                time.time() - self.last_write[name] < WRITE_EVERY_SECONDS):
+            return
+
+        # The periodic writes are atomic, only the last one of a run (see
+        #  flush()) is durable too since fsync takes seconds for a large
+        #  database.
+        durable = not periodically
+        if name == 'hash':
+            self._write(self.hash_db_path, self.hash_db, durable)
+        else:
+            self._write(self.location_db_path, self.location_db, durable)
+        self.pending_changes[name] = 0
+        self.last_write[name] = time.time()
+        self.written_not_durable[name] = not durable
+
+
+# The changes of the shared Db are written when elodie exits without
+#  flush_shared(), i.e. after an error or Ctrl+C.
+atexit.register(Db.flush_shared)

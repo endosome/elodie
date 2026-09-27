@@ -126,7 +126,7 @@ def test_set_album():
     assert album_name == metadata_new['album'], metadata_new
 
 def test_get_date_taken_before_1970(monkeypatch):
-    monkeypatch.setattr(time, 'gmtime', helper.windows_gmtime)
+    monkeypatch.setattr(time, 'localtime', helper.windows_localtime)
     temporary_folder, folder = helper.create_working_folder()
 
     origin = '%s/text.txt' % folder
@@ -466,4 +466,3 @@ def test_get_metadata_from_non_string_values(metadata_line, getter, expected):
     shutil.rmtree(folder)
 
     assert value == expected, value
-

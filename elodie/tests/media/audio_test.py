@@ -69,7 +69,9 @@ def test_get_date_taken():
     audio = Audio(helper.get_file('audio.m4a'))
     date_taken = audio.get_date_taken()
 
-    assert date_taken == (2016, 1, 4, 5, 28, 15, 0, 4, 0), date_taken
+    # QuickTime:CreateDate is 05:28:15 UTC, it was recorded in Houston (its
+    #  GPS position) where it was 23:28:15 the day before
+    assert date_taken[:6] == (2016, 1, 3, 23, 28, 15), date_taken
 
 def test_get_exiftool_attributes():
     audio = Video(helper.get_file('audio.m4a'))
@@ -226,4 +228,3 @@ def test_get_date_taken_falls_back_to_modification_time(value):
     shutil.rmtree(folder)
 
     assert date_taken == time.gmtime(1584273600), date_taken
-

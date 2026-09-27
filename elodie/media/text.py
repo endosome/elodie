@@ -7,11 +7,10 @@ are tracked by Elodie.
 
 from json import dumps, loads
 import os
-import time
 
 # load modules
 from elodie import log
-from elodie.compatability import _gmtime
+from elodie import dates
 from elodie.media.base import Base
 
 
@@ -67,7 +66,7 @@ class Text(Base):
         # We return the value if found in metadata
         if(isinstance(self.metadata_line, dict) and
                 'date_taken' in self.metadata_line):
-            return _gmtime(self.metadata_line['date_taken'])
+            return dates.local_time(self.metadata_line['date_taken'])
 
         # If there's no date_taken in the metadata we return
         #   from the filesystem
@@ -75,7 +74,7 @@ class Text(Base):
             os.path.getmtime(source),
             os.path.getctime(source)
         )
-        return _gmtime(seconds_since_epoch)
+        return dates.local_time(seconds_since_epoch)
 
     def get_metadata(self):
         self.parse_metadata_line()
@@ -127,12 +126,13 @@ class Text(Base):
         return status
 
     def set_date_taken(self, passed_in_time):
-        if(time is None):
+        if(passed_in_time is None):
             return False
 
-        seconds_since_epoch = time.mktime(passed_in_time.timetuple())
+        # Stored as a timestamp, of the date in the time zone of the computer
+        seconds_since_epoch = dates.to_timestamp(passed_in_time.timetuple())
         if self.skip_write('set_date_taken', (passed_in_time,),
-                           date_taken=_gmtime(seconds_since_epoch)):
+                           date_taken=dates.wall_clock(passed_in_time)):
             return True
 
         status = self.write_metadata(date_taken=seconds_since_epoch)

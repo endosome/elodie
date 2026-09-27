@@ -11,10 +11,9 @@ are used to represent the actual files.
 
 import os
 import re
-from time import mktime
 
 # load modules
-from elodie.compatability import _gmtime
+from elodie import dates
 from elodie.external.pyexiftool import ExifTool
 from elodie.media.base import Base
 
@@ -267,7 +266,7 @@ class Media(Base):
             return False
 
         if self.skip_write('set_date_taken', (time,),
-                           date_taken=_gmtime(mktime(time.timetuple()))):
+                           date_taken=dates.wall_clock(time)):
             return True
 
         tags = {}

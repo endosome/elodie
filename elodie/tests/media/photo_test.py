@@ -262,7 +262,8 @@ def test_set_date_taken():
 
 @pytest.mark.skipif(helper.is_windows(), reason='time.mktime does not support dates before 1970 on Windows')
 def test_set_date_taken_before_1970(monkeypatch):
-    monkeypatch.setattr(time, 'gmtime', helper.windows_gmtime)
+    monkeypatch.setattr(time, 'localtime', helper.windows_localtime)
+    monkeypatch.setattr(time, 'mktime', helper.windows_mktime)
     temporary_folder, folder = helper.create_working_folder()
 
     origin = '%s/photo.jpg' % folder

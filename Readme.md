@@ -370,6 +370,16 @@ capitalization=upper
 # -> 2012-05-MAR-12-59-30-DSC_1234-MY-ALBUM.JPG
 ```
 
+#### Which date and time are used
+
+Files are named and put in folders by the time they were taken, the same on every computer:
+
+* **Photos** use the time of the camera's clock, as it is stored in the photo. Photos have no time zone, this is how Immich and other photo applications show them too.
+* **Videos** use their local time when they have it, i.e. videos of iPhones. Most other videos store their time in UTC, it is converted to the time zone where the video was taken, found from its GPS position. Videos without a GPS position use the time zone of the computer. Some cameras store their local time instead of UTC, their videos are off by the time zone then.
+* **Files without a date** use their modification time in the time zone of the computer.
+
+If a camera's clock was wrong, correct the time with `./elodie.py update --time`.
+
 ### Reorganize by changing location and dates
 
 If you notice some photos were incorrectly organized you should definitely let me know. In the example above I put two photos into an *Unknown Location* folder because I didn't find GPS information in their EXIF. To fix this I'll help you add GPS information into the photos' EXIF and then I'll reorganize them.

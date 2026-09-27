@@ -64,7 +64,8 @@ def test_import_file_audio():
     shutil.rmtree(folder)
     shutil.rmtree(folder_destination)
 
-    assert helper.path_tz_fix(os.path.join('2016-01-Jan','Houston','2016-01-04_05-28-15-audio.m4a')) in dest_path, dest_path
+    # Recorded at 05:28:15 UTC in Houston, see audio_test.test_get_date_taken
+    assert helper.path_tz_fix(os.path.join('2016-01-Jan','Houston','2016-01-03_23-28-15-audio.m4a')) in dest_path, dest_path
 
 def test_import_file_photo():
     temporary_folder, folder = helper.create_working_folder()

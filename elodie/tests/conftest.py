@@ -4,6 +4,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import pytest
 
 # Add the parent directories to sys.path so we can import elodie modules and test helpers
@@ -15,6 +16,14 @@ sys.path.insert(0, test_dir)
 from elodie.external.pyexiftool import ExifTool
 from elodie.dependencies import get_exiftool
 from elodie import constants
+
+
+# The tests run in GMT unless they set another time zone with
+#  helper.time_zone(). Test modules set TZ as well, time.tzset() makes all
+#  time functions use it, not only some of them.
+os.environ['TZ'] = 'GMT'
+if hasattr(time, 'tzset'):
+    time.tzset()
 
 
 def pytest_configure(config):

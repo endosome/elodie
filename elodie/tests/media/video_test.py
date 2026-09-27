@@ -138,7 +138,8 @@ def test_set_date_taken():
 
 @pytest.mark.skipif(helper.is_windows(), reason='time.mktime does not support dates before 1970 on Windows')
 def test_set_date_taken_before_1970(monkeypatch):
-    monkeypatch.setattr(time, 'gmtime', helper.windows_gmtime)
+    monkeypatch.setattr(time, 'localtime', helper.windows_localtime)
+    monkeypatch.setattr(time, 'mktime', helper.windows_mktime)
     temporary_folder, folder = helper.create_working_folder()
 
     origin = '%s/video.mov' % folder
@@ -270,7 +271,9 @@ def test_get_date_taken_skips_unset_date():
 
     shutil.rmtree(folder)
 
-    assert date_taken == helper.time_convert((2021, 5, 1, 10, 0, 0, 5, 121, 0)), date_taken
+    # MediaCreateDate is UTC, the video was taken in California (its GPS
+    #  position) where it was 03:00
+    assert date_taken[:6] == (2021, 5, 1, 3, 0, 0), date_taken
 
 def test_get_date_taken_prefers_metadata_over_older_file_time():
     folder = tempfile.mkdtemp()
@@ -308,4 +311,3 @@ def test_get_date_taken_without_metadata_uses_file_time():
 ])
 def test_normalize_date_string(value, expected):
     assert Video().normalize_date_string(value) == expected
-

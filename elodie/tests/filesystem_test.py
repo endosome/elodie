@@ -1241,7 +1241,7 @@ def test_process_file_utime_after_reimport_in_non_utc_timezone(non_utc_timezone)
     assert second_mtime == first_mtime, (first_mtime, second_mtime)
 
 def test_set_utime_with_date_before_1970(monkeypatch):
-    monkeypatch.setattr(time, 'gmtime', helper.windows_gmtime)
+    monkeypatch.setattr(time, 'localtime', helper.windows_localtime)
     monkeypatch.setattr(time, 'mktime', helper.windows_mktime)
     filesystem = FileSystem()
     temporary_folder, folder = helper.create_working_folder()

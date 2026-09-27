@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import json
 import os
@@ -195,6 +196,18 @@ def windows_gmtime(seconds=None):
         raise OSError(22, 'Invalid argument')
     return _original_gmtime(seconds)
 
+_original_localtime = time.localtime
+
+# windows_localtime(seconds)
+# Behaves like time.localtime on Windows, which raises OSError
+#  for negative timestamps (dates before 1970).
+# Use with monkeypatch.setattr(time, 'localtime', helper.windows_localtime)
+
+def windows_localtime(seconds=None):
+    if seconds is not None and seconds < 0:
+        raise OSError(22, 'Invalid argument')
+    return _original_localtime(seconds)
+
 _original_mktime = time.mktime
 
 # windows_mktime(t)
@@ -237,6 +250,20 @@ def create_png(file_path, width, height):
             chunk(b'IDAT', zlib.compress(row * height, 9)) +
             chunk(b'IEND', b'')
         )
+
+@contextlib.contextmanager
+def time_zone(name):
+    """Run code in a time zone, i.e. 'Europe/Warsaw'. The tests run in GMT
+    otherwise, where local time and UTC are the same."""
+    previous = os.environ.get('TZ')
+    os.environ['TZ'] = name
+    time.tzset()
+    try:
+        yield
+    finally:
+        os.environ['TZ'] = previous if previous is not None else 'GMT'
+        time.tzset()
+
 
 def time_convert(s_time):
     if is_windows():

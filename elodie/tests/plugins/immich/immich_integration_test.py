@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.realp
 import helper
 from elodie import constants
 from elodie.config import load_config
+from elodie.filesystem import FileSystem
 from elodie.media.photo import Photo
 from elodie.plugins.immich.immich import Immich, ImmichApiClient, get_album_names
 
@@ -281,3 +282,57 @@ def test_album_names_which_are_paths_are_not_synced(setup):
     assert os.path.isfile(path)
     assert file_state(library, 'a.jpg')[0] == []
     assert any('is not synced, its name cannot be stored in a file' in m for m in messages), messages
+
+def import_photo(library, name, album):
+    """Import a photo with Elodie, so it has the path Elodie gives it."""
+    source = os.path.join(os.path.dirname(library), name)
+    shutil.copyfile(helper.get_file('plain.jpg'), source)
+    Photo(source).set_album(album)
+    Photo(source).set_rating('')
+    return FileSystem().process_file(source, library, Photo(source), move=True)
+
+def test_restored_asset_does_not_bring_back_what_was_removed(setup):
+    # Immich restores an offline asset with its albums when its file is back
+    #  at its path, i.e. when an album is added in Immich and removed again.
+    library, server, names = setup
+    import_photo(library, 'a.jpg', names('Summer'))
+    server.scan(library)
+    run_batch()
+    first = server.assets()['a.jpg']['id']
+    trip = server.call('POST', '/albums', json={'albumName': names('Trip')})
+    server.call('PUT', '/albums/%s/assets' % trip['id'], json={'ids': [first]})
+    run_batch()
+    server.scan(library)
+    run_batch()
+    second = server.assets()['a.jpg']['id']
+    server.call('DELETE', '/albums/%s/assets' % trip['id'], json={'ids': [second]})
+    run_batch()
+
+    server.scan(library)
+    assert server.assets()['a.jpg']['id'] == first
+    assert server.albums_of('a.jpg') == [names('Summer'), names('Trip')]
+    run_batch()
+    server.scan(library)
+    result, messages = run_batch()
+
+    assert result == (True, 0), messages
+    assert file_state(library, 'a.jpg')[:2] == ([names('Summer')], False)
+    assert server.albums_of('a.jpg') == [names('Summer')]
+
+def test_trashed_assets_are_not_synced(setup):
+    library, server, names = setup
+    path = create_photo(library, 'a.jpg', album=names('Summer'))
+    server.scan(library)
+    run_batch()
+    asset = server.assets()['a.jpg']['id']
+    server.call('DELETE', '/assets', json={'ids': [asset]})
+    server.call('PUT', '/assets', json={'ids': [asset], 'isFavorite': True})
+
+    result, messages = run_batch()
+
+    assert result == (True, 0), messages
+    assert file_state(library, 'a.jpg') == ([names('Summer')], False, path)
+    # Restored from the trash it is synced again
+    server.call('POST', '/trash/restore/assets', json={'ids': [asset]})
+    run_batch()
+    assert file_state(library, 'a.jpg')[:2] == ([names('Summer')], True)

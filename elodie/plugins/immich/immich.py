@@ -142,6 +142,10 @@ class ImmichApiClient(object):
         version = self._request('GET', '/server/version')
         return (version['major'], version['minor'], version['patch'])
 
+    def get_my_user_id(self):
+        """Get the ID of the user of the API key."""
+        return self._request('GET', '/users/me')['id']
+
     def get_albums(self):
         """Get all albums the user can see."""
         return self._request('GET', '/albums')
@@ -489,24 +493,45 @@ class Sync(object):
     def log(self, message):
         self.plugin.log(message)
 
-    def library_filter(self):
-        return {
+    def library_filter(self, active=True):
+        """Filter for the assets of the library.
+
+        :param bool active: Only assets which are not offline, i.e. moved,
+            and not in the trash. Immich includes both otherwise.
+        """
+        search_filter = {
+            # Immich matches it ignoring case and accents, so it can find
+            #  more, to_elodie_path() only accepts the exact folder.
             'originalPath': {
                 'startsWith': self.plugin.external_library_path + '/'},
-            'isOffline': {'eq': False},
             # Not locked assets and not hidden ones like the video of a Live
             #  Photo which Immich shows with the photo.
             'visibility': {'in': ['timeline', 'archive']},
         }
+        if active:
+            search_filter['isOffline'] = {'eq': False}
+            search_filter['trashedAt'] = {'eq': None}
+        return search_filter
 
     def run(self):
-        # Only what is needed, a library can have hundreds of thousands
-        assets = {
-            asset['id']: {'id': asset['id'],
-                          'originalPath': asset['originalPath'],
-                          'isFavorite': asset.get('isFavorite', False)}
-            for asset in self.client.search_assets(self.library_filter())
-        }
+        # The assets of the user, not the ones of partners which Immich
+        #  includes, i.e. a partner's external library of the same folder.
+        #  Only what is needed is kept, a library can have hundreds of
+        #  thousands.
+        user_id = self.client.get_my_user_id()
+        assets = {}
+        known = set()
+        for asset in self.client.search_assets(self.library_filter(False)):
+            if asset.get('ownerId') != user_id:
+                continue
+            known.add(asset['id'])
+            if asset.get('isOffline') or asset.get('isTrashed'):
+                continue
+            assets[asset['id']] = {
+                'id': asset['id'],
+                'originalPath': asset['originalPath'],
+                'isFavorite': asset.get('isFavorite', False),
+            }
         memberships = self.get_album_memberships()
         self.log('{} assets and {} albums in Immich'.format(
             len(assets), len(self.album_ids)))
@@ -531,9 +556,12 @@ class Sync(object):
                     self.counts['assets'], len(assets)))
 
         self.apply_immich_changes()
-        # Forget assets which are not in Immich anymore, i.e. moved files
+        # Forget assets which are not in Immich anymore. The state of offline
+        #  and trashed assets is kept, Immich restores them with their albums
+        #  and favorite when their file is back, i.e. when a file is moved
+        #  back to a folder of an album.
         for asset_id in list(self.state):
-            if asset_id not in assets:
+            if asset_id not in known:
                 del self.state[asset_id]
         self.plugin.save_state(self.state)
 
@@ -622,8 +650,11 @@ class Sync(object):
 
         if new_path != path:
             # Immich sees the moved file as a new asset, its albums and
-            #  favorite are restored from the file then.
-            self.state.pop(asset_id, None)
+            #  favorite are restored from the file then. The asset becomes
+            #  offline, if the file comes back to its path Immich restores
+            #  it and its state tells what changed since.
+            self.state[asset_id] = {'path': path, 'signature': None}
+            self.state[asset_id].update(merged)
             return
 
         if merged != immich_state:

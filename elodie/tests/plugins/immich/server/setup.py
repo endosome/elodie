@@ -25,7 +25,8 @@ ADMIN = {'email': 'admin@example.com', 'password': 'elodie-test',
          'name': 'Admin'}
 # The permissions the plugin needs, keep in sync with the Readme
 PLUGIN_PERMISSIONS = ['album.read', 'album.create', 'albumAsset.create',
-                      'albumAsset.delete', 'asset.read', 'asset.update']
+                      'albumAsset.delete', 'asset.read', 'asset.update',
+                      'user.read']
 
 
 def main():

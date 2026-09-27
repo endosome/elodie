@@ -31,7 +31,7 @@ external_library_path=/path/to/your/library/in/immich
 ```
 
 * **api_url**: The API URL of Immich, it ends with `/api`.
-* **api_key**: An [API key](https://docs.immich.app/features/command-line-interface#obtain-the-api-key) of the Immich user who owns the external library. It needs these permissions: `album.read`, `album.create`, `albumAsset.create`, `albumAsset.delete`, `asset.read` and `asset.update`.
+* **api_key**: An [API key](https://docs.immich.app/features/command-line-interface#obtain-the-api-key) of the Immich user who owns the external library. It needs these permissions: `album.read`, `album.create`, `albumAsset.create`, `albumAsset.delete`, `asset.read`, `asset.update` and `user.read`.
 * **external_library_path**: The folder of your Elodie library as Immich sees it, the import path of the external library.
 * **elodie_library_path** (optional): The folder of your Elodie library as Elodie sees it. It's only needed when it differs from `external_library_path`, i.e. when Immich runs in Docker or on another computer. For example `external_library_path=/mnt/photos` and `elodie_library_path=/home/me/photos`.
 * **timeout** (optional): Seconds to wait for a response of Immich, 30 by default.
@@ -78,7 +78,8 @@ A favorite in Immich is a rating of 5 in the photo (`XMP:Rating`). Removing the 
 * Only albums and favorites are synced. Immich reads descriptions, locations and dates from the photos when it scans them.
 * Some formats can't store albums and favorites, i.e. MKV and WebM videos which ExifTool can't change. Their albums and favorites are only kept in Immich.
 * When you change the album of a photo with Elodie before a run synced a change made in Immich, the change made in Immich is lost. Run `./elodie.py batch` before updating photos with Elodie.
-* Only photos and videos in the external library are synced, not the ones uploaded to Immich.
+* Only your photos and videos in the external library are synced, not the ones uploaded to Immich or the ones of a partner who shares theirs with you.
+* Photos in Immich's trash are not synced until they are restored.
 
 ## Testing
 

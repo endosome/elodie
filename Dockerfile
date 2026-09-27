@@ -1,53 +1,95 @@
-# Base image with Python 3.11 slim
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1
 
-# Avoid interactive prompts and set UTF-8
-ENV DEBIAN_FRONTEND=noninteractive
-ENV LANG=C.UTF-8
-ENV LC_ALL=C.UTF-8
+# Elodie in a container. The default target runs elodie:
+#   docker build -t elodie .
+#   docker run --rm --user "$(id -u):$(id -g)" -e TZ=Europe/Warsaw \
+#       -v ~/.elodie:/elodie -v ~/Pictures:/photos \
+#       elodie import --destination /photos/library /photos/new
+# The dev target runs the tests:
+#   docker build --target dev -t elodie-dev .
+#   docker run --rm elodie-dev pytest elodie/tests -n auto --dist loadgroup
+# See "Running in Docker" in the Readme.
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        perl \
-        wget \
-        make \
-        locales && \
-    locale-gen C.UTF-8 && \
-    pip install --upgrade pip setuptools wheel && \
-    rm -rf /var/lib/apt/lists/*
+ARG PYTHON_VERSION=3.12
 
-# Install ExifTool, Elodie requires 13.49 or higher which Debian does not ship
+# ExifTool without its documentation and tests
+FROM python:${PYTHON_VERSION}-slim AS exiftool
 ARG EXIFTOOL_VERSION=13.59
 ARG EXIFTOOL_SHA256=87d3317882fdae9cb4dcfe57a96a378d0132ffc02c731315bf128b19ddcf7aac
-RUN wget -O /tmp/Image-ExifTool.tar.gz https://github.com/exiftool/exiftool/archive/refs/tags/${EXIFTOOL_VERSION}.tar.gz && \
-    echo "${EXIFTOOL_SHA256}  /tmp/Image-ExifTool.tar.gz" | sha256sum --check && \
-    tar -xzf /tmp/Image-ExifTool.tar.gz -C /tmp && \
-    cd /tmp/exiftool-${EXIFTOOL_VERSION} && \
-    perl Makefile.PL && \
-    make && \
-    make install && \
-    cd / && \
-    rm -rf /tmp/Image-ExifTool.tar.gz /tmp/exiftool-${EXIFTOOL_VERSION} && \
+ADD --checksum=sha256:${EXIFTOOL_SHA256} \
+    https://github.com/exiftool/exiftool/archive/refs/tags/${EXIFTOOL_VERSION}.tar.gz \
+    /tmp/exiftool.tar.gz
+RUN mkdir /opt/exiftool && \
+    tar -xzf /tmp/exiftool.tar.gz -C /opt/exiftool --strip-components=1 \
+        exiftool-${EXIFTOOL_VERSION}/exiftool exiftool-${EXIFTOOL_VERSION}/lib
+
+
+FROM python:${PYTHON_VERSION}-slim AS base
+
+ENV LANG=C.UTF-8 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore
+
+# ExifTool is written in Perl. Elodie requires 13.49 or higher which Debian
+#  does not ship, the archive of the official repository's tag is used.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends perl && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=exiftool /opt/exiftool /opt/exiftool
+RUN ln -s /opt/exiftool/exiftool /usr/local/bin/exiftool && \
     exiftool -ver
 
-# Set working directory
 WORKDIR /opt/elodie
 
-# Copy Elodie requirements files
+# The requirements of elodie and its plugins
 COPY requirements.txt .
-COPY docs/requirements.txt docs/requirements.txt
+COPY elodie/plugins/googlephotos/requirements.txt elodie/plugins/googlephotos/requirements.txt
+COPY elodie/plugins/immich/requirements.txt elodie/plugins/immich/requirements.txt
+RUN pip install --no-cache-dir \
+        -r requirements.txt \
+        -r elodie/plugins/googlephotos/requirements.txt \
+        -r elodie/plugins/immich/requirements.txt
+
+
+# The whole project with the tests, for development
+FROM base AS dev
+
 COPY elodie/tests/requirements.txt elodie/tests/requirements.txt
+RUN pip install --no-cache-dir -r elodie/tests/requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r docs/requirements.txt && \
-    pip install --no-cache-dir -r elodie/tests/requirements.txt && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Copy the rest of the Elodie project
 COPY . .
 
-# Default command (interactive bash for debugging)
+# Not root, the tests check that permissions are respected
+RUN useradd --create-home --uid 1000 elodie && \
+    chown -R elodie:elodie /opt/elodie
+USER elodie
+
 CMD ["/bin/bash"]
 
+
+# Elodie without its tests
+FROM base AS source
+COPY elodie.py /src/
+COPY elodie /src/elodie
+RUN rm -rf /src/elodie/tests
+
+
+FROM base AS runtime
+
+COPY --from=source /src /opt/elodie
+
+# Elodie keeps its hash and location databases and config.ini in this
+#  folder, mount it to keep them. The user can be changed with --user so
+#  the files it creates belong to the user who runs it.
+ENV ELODIE_APPLICATION_DIRECTORY=/elodie
+RUN useradd --create-home --uid 1000 elodie && \
+    mkdir /elodie && \
+    chown elodie:elodie /elodie && \
+    chmod 777 /elodie
+USER elodie
+VOLUME /elodie
+
+ENTRYPOINT ["python", "/opt/elodie/elodie.py"]
+CMD ["--help"]

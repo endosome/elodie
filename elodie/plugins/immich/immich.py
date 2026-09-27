@@ -146,9 +146,19 @@ class ImmichApiClient(object):
         """Get the ID of the user of the API key."""
         return self._request('GET', '/users/me')['id']
 
-    def get_albums(self):
-        """Get all albums the user can see."""
-        return self._request('GET', '/albums')
+    def get_albums(self, owned=False, asset_id=None):
+        """Get the albums the user can see.
+
+        :param bool owned: Only the albums of the user, not the ones other
+            users share with them.
+        :param str asset_id: Only the albums which contain the asset.
+        """
+        params = {}
+        if owned:
+            params['isOwned'] = 'true'
+        if asset_id:
+            params['assetId'] = asset_id
+        return self._request('GET', '/albums', params=params)
 
     def create_album(self, name):
         """Create an album.
@@ -258,6 +268,12 @@ class Immich(PluginBase):
 
     #: Seconds between saving the state during long runs.
     SAVE_INTERVAL = 60
+
+    #: Seconds until the state of an asset which is not in Immich anymore is
+    #: removed. Longer than Immich keeps assets in the trash (30 days), it
+    #: restores them with their albums, and a search can miss an asset which
+    #: changes while it is read.
+    FORGET_AFTER = 60 * 24 * 3600
 
     #: Keys of the plugin database of earlier versions of this plugin.
     OBSOLETE_KEYS = (
@@ -560,8 +576,12 @@ class Sync(object):
         #  and trashed assets is kept, Immich restores them with their albums
         #  and favorite when their file is back, i.e. when a file is moved
         #  back to a folder of an album.
-        for asset_id in list(self.state):
-            if asset_id not in known:
+        now = time.time()
+        for asset_id, state in list(self.state.items()):
+            if asset_id in known:
+                state.pop('missing_since', None)
+            elif now - state.setdefault('missing_since', now) > \
+                    self.plugin.FORGET_AFTER:
                 del self.state[asset_id]
         self.plugin.save_state(self.state)
 
@@ -578,7 +598,9 @@ class Sync(object):
         :returns: dict of asset ID -> set of album names
         """
         memberships = {}
-        albums = sorted(self.client.get_albums(),
+        # Only the albums of the user, albums which others share with them
+        #  must not change or move the user's files.
+        albums = sorted(self.client.get_albums(owned=True),
                         key=lambda album: album.get('createdAt', ''))
         for album in albums:
             name = album['albumName']
@@ -592,7 +614,10 @@ class Sync(object):
             self.album_ids.setdefault(name, []).append(album['id'])
             if not album.get('assetCount'):
                 continue
-            album_filter = dict(self.library_filter())
+            # Without the filters for offline and trashed assets: Immich pages
+            #  by offset and an asset becoming offline while the pages are
+            #  read, i.e. during a scan, would move the next page.
+            album_filter = self.library_filter(active=False)
             album_filter['albumIds'] = {'any': [album['id']]}
             for asset in self.client.search_assets(album_filter):
                 memberships.setdefault(asset['id'], set()).add(name)
@@ -632,6 +657,12 @@ class Sync(object):
             file_state = self.read_file_state(media)
 
         merged = merge_states(baseline, file_state, immich_state)
+        removed_in_immich = set(file_state['albums']) - set(merged['albums'])
+        if baseline is not None and removed_in_immich:
+            # A search can miss an asset which changes while it is read, the
+            #  albums of the asset tell if it was removed from them.
+            immich_state['albums'] = self.get_albums_of_asset(asset_id)
+            merged = merge_states(baseline, file_state, immich_state)
         new_path = path
         if merged != file_state and writable:
             if media is None:
@@ -670,6 +701,13 @@ class Sync(object):
             self.pending[asset_id] = new_state
         else:
             self.state[asset_id] = new_state
+
+    def get_albums_of_asset(self, asset_id):
+        names = set()
+        for album in self.client.get_albums(owned=True, asset_id=asset_id):
+            if is_album_name_storable(album['albumName']):
+                names.add(album['albumName'])
+        return sorted(names)
 
     def read_file_state(self, media):
         metadata = media.get_metadata() or {}

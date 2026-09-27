@@ -1,0 +1,48 @@
+# Immich for the integration tests of the Immich plugin, derived from the
+#  docker-compose.yml of the Immich release without machine learning.
+#
+#   IMMICH_TEST_LIBRARY_PATH=/tmp/immich-library docker compose up -d
+#   python setup.py
+#
+# IMMICH_VERSION selects the release, i.e. v3.2.2 or "release" for the latest.
+name: elodie-immich-test
+
+services:
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v3.2.2}
+    volumes:
+      - immich-data:/data
+      # The Elodie library of the tests as an external library
+      - ${IMMICH_TEST_LIBRARY_PATH:?set it to an empty folder}:/external/library:ro
+    environment:
+      DB_HOSTNAME: database
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      DB_DATABASE_NAME: immich
+      REDIS_HOSTNAME: redis
+      IMMICH_MACHINE_LEARNING_ENABLED: 'false'
+    ports:
+      - '127.0.0.1:${IMMICH_TEST_PORT:-2283}:2283'
+    depends_on:
+      redis:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+
+  redis:
+    image: docker.io/valkey/valkey:9@sha256:70739f85ad2ee01a726a965584a0f94895f01b0c60b3cc8b0aeef11eaa6888cf
+    healthcheck:
+      test: redis-cli ping | grep -q PONG || exit 1
+      interval: 2s
+
+  database:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: immich
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    shm_size: 128mb
+
+volumes:
+  immich-data:

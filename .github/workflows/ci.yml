@@ -72,3 +72,66 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: coveralls --service=github
+
+  immich:
+    # The Immich plugin against a real Immich: the oldest supported release
+    #  and the latest one, to notice when a new release breaks it.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        immich-version: ["v3.2.2", "release"]
+    env:
+      EXIFTOOL_VERSION: "13.59"
+      EXIFTOOL_SHA256: "87d3317882fdae9cb4dcfe57a96a378d0132ffc02c731315bf128b19ddcf7aac"
+      IMMICH_VERSION: ${{ matrix.immich-version }}
+      IMMICH_TEST_LIBRARY_PATH: /tmp/immich-library
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            elodie/tests/requirements.txt
+            elodie/plugins/immich/requirements.txt
+
+      - name: Start Immich
+        # Pulling and starting it takes a while, the next steps run meanwhile
+        working-directory: elodie/tests/plugins/immich/server
+        run: |
+          mkdir -p "$IMMICH_TEST_LIBRARY_PATH"
+          docker compose up -d
+
+      - name: Install ExifTool
+        run: |
+          wget -O Image-ExifTool.tar.gz https://github.com/exiftool/exiftool/archive/refs/tags/${EXIFTOOL_VERSION}.tar.gz
+          echo "${EXIFTOOL_SHA256}  Image-ExifTool.tar.gz" | sha256sum --check
+          tar -xzf Image-ExifTool.tar.gz
+          cd exiftool-${EXIFTOOL_VERSION}
+          perl Makefile.PL
+          make
+          sudo make install
+          exiftool -ver
+
+      - name: Install dependencies
+        run: |
+          pip install -r elodie/tests/requirements.txt
+          pip install -r elodie/plugins/immich/requirements.txt
+
+      - name: Set up Immich
+        working-directory: elodie/tests/plugins/immich/server
+        run: |
+          docker compose up -d --wait
+          curl -s http://127.0.0.1:2283/api/server/version
+          python setup.py --env-file >> "$GITHUB_ENV"
+
+      - name: Run the Immich plugin tests
+        run: pytest elodie/tests/plugins/immich -v
+
+      - name: Show the logs of Immich
+        if: failure()
+        working-directory: elodie/tests/plugins/immich/server
+        run: docker compose logs --tail 200 immich-server

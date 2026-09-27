@@ -76,3 +76,18 @@ A favorite in Immich is a rating of 5 in the photo (`XMP:Rating`). Removing the 
 * Only albums and favorites are synced. Immich reads descriptions, locations and dates from the photos when it scans them.
 * When you change the album of a photo with Elodie before a run synced a change made in Immich, the change made in Immich is lost. Run `./elodie.py batch` before updating photos with Elodie.
 * Only photos and videos in the external library are synced, not the ones uploaded to Immich.
+
+## Testing
+
+The tests in `elodie/tests/plugins/immich/immich_integration_test.py` run against a real Immich in Docker, see `elodie/tests/plugins/immich/server`:
+
+```bash
+cd elodie/tests/plugins/immich/server
+export IMMICH_TEST_LIBRARY_PATH=$(mktemp -d)
+docker compose up -d --wait
+eval "$(python setup.py)"
+cd -
+pytest elodie/tests/plugins/immich
+```
+
+Set `IMMICH_VERSION` to test another release of Immich, i.e. `release` for the latest one.

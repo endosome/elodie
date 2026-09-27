@@ -52,7 +52,7 @@ class Photo(Media):
 
         exif = self.get_exiftool_attributes()
         if not exif:
-            return seconds_since_epoch
+            return _gmtime(seconds_since_epoch)
 
         # We need to parse a string from EXIF into a timestamp.
         # EXIF DateTimeOriginal and EXIF DateTime are both stored
@@ -93,6 +93,8 @@ class Photo(Media):
         :returns: bool
         """
         source = self.source
+        if not source:
+            return False
 
         extension = os.path.splitext(source)[1][1:].lower()
         if extension not in self.extensions:

@@ -10,6 +10,7 @@ are used to represent the actual files.
 """
 
 import os
+import re
 from time import mktime
 
 # load modules
@@ -134,12 +135,13 @@ class Media(Base):
         if(self.description_key not in exiftool_attributes):
             return None
 
-        return exiftool_attributes[self.description_key]
+        # ExifTool returns numbers for descriptions like "2019"
+        return str(exiftool_attributes[self.description_key])
 
     def get_exiftool_attributes(self):
         """Get attributes for the media object from exiftool.
 
-        :returns: dict, or False if exiftool was not available.
+        :returns: dict, or None if exiftool returned nothing.
         """
         source = self.source
 
@@ -148,7 +150,7 @@ class Media(Base):
             self.exif_metadata = ExifTool().get_metadata(source)
 
         if not self.exif_metadata:
-            return False
+            return None
 
         return self.exif_metadata
 
@@ -289,6 +291,10 @@ class Media(Base):
         if(description is None):
             return None
 
+        if self.skip_write('set_description', (description,),
+                           description=description):
+            return True
+
         tags = {self.description_key: description}
         status = self.__set_tags(tags)
         self.reset_cache()
@@ -313,13 +319,11 @@ class Media(Base):
 
         # If self.set_gps_ref == True then it means we are writing an EXIF
         #   GPS tag which requires us to set the reference key.
-        # That's because the lat/lon are absolute values.
+        # That's because the lat/lon are absolute values. Both are set, the
+        #  ones of an earlier location could be of the other hemisphere.
         if self.set_gps_ref:
-            if latitude < 0:
-                tags[self.latitude_ref_key] = 'S'
-
-            if longitude < 0:
-                tags[self.longitude_ref_key] = 'W'
+            tags[self.latitude_ref_key] = 'S' if latitude < 0 else 'N'
+            tags[self.longitude_ref_key] = 'W' if longitude < 0 else 'E'
 
         status = self.__set_tags(tags)
         self.reset_cache()
@@ -402,6 +406,10 @@ class Media(Base):
         if(not self.is_valid()):
             return None
 
+        if self.skip_write('set_rating', (rating,),
+                           rating=rating if rating != '' else None):
+            return True
+
         tags = {self.rating_key: rating}
         status = self.__set_tags(tags)
         self.reset_cache()
@@ -420,11 +428,25 @@ class Media(Base):
         backup = source + '_original'
         backup_exists = os.path.exists(backup)
 
-        status = ''
-        status = ExifTool().set_tags(tags,source)
+        status = ExifTool().set_tags(tags, source)
 
         os.utime(source, ns=(stat_info.st_atime_ns, stat_info.st_mtime_ns))
         if not backup_exists and os.path.exists(backup):
             os.remove(backup)
 
-        return status != ''
+        return self._write_succeeded(status)
+
+    @staticmethod
+    def _write_succeeded(status):
+        """Check the output of ExifTool for writing a file. It reports the
+        number of files, i.e. "0 image files updated" and "1 files weren't
+        updated due to errors" for formats it cannot write like MKV.
+
+        :param bytes status: Output of ExifTool.
+        :returns: bool
+        """
+        if not status or b"updated due to errors" in status:
+            return False
+        counts = re.findall(
+            rb'(\d+) image files (?:updated|unchanged)', status)
+        return any(int(count) > 0 for count in counts)

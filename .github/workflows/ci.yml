@@ -203,6 +203,10 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Check the image for arm64
+        # On the oldest 64-bit ARM CPU (ARMv8.0-A, i.e. Raspberry Pi 3), the
+        #  image must not need a newer one
+        env:
+          QEMU_CPU: cortex-a53
         run: docker/smoke-test.sh elodie:arm64 linux/arm64
 
       - uses: docker/login-action@v4

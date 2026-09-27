@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.realp
 import helper
 from elodie import constants
 from elodie.config import load_config
+from elodie.filesystem import FileSystem
 from elodie.media.photo import Photo
 from elodie.plugins.immich import immich as immich_module
 from elodie.plugins.immich.immich import (
@@ -681,3 +682,75 @@ def test_client_dry_run_changes_nothing(mock_print):
         '[DRY-RUN][Immich] Would remove 1 assets from album album123',
         '[DRY-RUN][Immich] Would set favorite to True for 2 assets',
     ]
+
+def test_album_change_in_folders_without_albums(library, immich):
+    # When the folders do not include the album the file is not moved,
+    #  Elodie reports the same path which is not an error.
+    with open('%s/config.ini' % constants.application_directory(), 'a') as f:
+        f.write('\n[Directory]\ndate=%Y-%m\nfull_path=%date\n')
+    if hasattr(load_config, 'config'):
+        del load_config.config
+    # Imported by Elodie so it is where Elodie puts it
+    source = os.path.join(os.path.dirname(library), 'a.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), source)
+    Photo(source).set_rating('')
+    path = FileSystem().process_file(source, library, Photo(source))
+    assert os.path.dirname(path) == os.path.join(library, '2015-12'), path
+    immich.scan()
+    run_batch(immich)
+    immich.add_album('Trip', ['a.jpg'])
+
+    with mock.patch.object(Immich, 'display') as display:
+        result = run_batch(immich)
+        second = run_batch(immich)
+
+    assert result == (True, 1), display.call_args_list
+    assert find_file(library, 'a.jpg') == path
+    assert file_state(library, 'a.jpg') == (['Trip'], False)
+    assert second == (True, 0), display.call_args_list
+
+def test_album_removed_from_all_albums_with_its_name(library, immich):
+    create_photo(library, 'a.jpg', album='Trip')
+    immich.scan()
+    first = immich.add_album('Trip')
+    second = immich.add_album('Trip', ['a.jpg'])
+    run_batch(immich)
+    immich.albums[first]['assetIds'].add(immich.asset_for('a.jpg')['id'])
+    # Removed in the file, i.e. with elodie.py update
+    Photo(find_file(library, 'a.jpg')).set_album('')
+
+    run_batch(immich)
+    immich.scan()
+    result = run_batch(immich)
+
+    assert immich.albums[first]['assetIds'] == set()
+    assert immich.albums[second]['assetIds'] == set()
+    assert file_state(library, 'a.jpg') == ([], False)
+    assert result == (True, 0), result
+
+def test_unexpected_errors_fail_the_batch_with_a_message(library, immich):
+    create_photo(library, 'a.jpg')
+    immich.scan()
+    immich.get_albums = mock.Mock(side_effect=KeyError('albumName'))
+
+    with mock.patch.object(Immich, 'display') as display:
+        result = run_batch(immich)
+
+    assert result == (False, 0)
+    assert "Immich sync failed: 'albumName'" in [c[0][0] for c in display.call_args_list]
+
+@pytest.mark.parametrize('status,body', [
+    # The web app of Immich answers requests for JSON with 406, others with
+    #  its HTML
+    (406, b'{"message":"The route /server/version was requested as application/json, but only returns text/html"}'),
+    (200, b'<!doctype html><html></html>'),
+])
+def test_client_reports_an_api_url_without_api(status, body):
+    client = ImmichApiClient('http://immich.test', 'key')
+    web_app = requests.Response()
+    web_app.status_code = status
+    web_app._content = body
+    with mock.patch.object(client.session, 'request', return_value=web_app) as request:
+        with pytest.raises(ImmichError, match='not a response of the Immich API, api_url must end with /api'):
+            client.get_version()
+    assert request.call_count == 1

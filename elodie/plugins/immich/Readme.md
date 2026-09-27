@@ -44,7 +44,7 @@ Run the sync whenever you like, i.e. with cron:
 ./elodie.py batch
 ```
 
-Add `--dry-run` to see what would change without changing anything, and `--debug` for details.
+Add `--dry-run` to see what would change without changing anything, and `--debug` for details. It exits with 1 when the sync failed, i.e. for cron to report it.
 
 Immich only notices new and moved files when it scans the external library. Set up a scan schedule or enable watching the library for changes in Immich's settings. Files which Immich did not scan yet are synced by a later run.
 

@@ -88,7 +88,10 @@ class ImmichApiClient(object):
                 delay = self.backoff * 2 ** attempt
             else:
                 if response.status_code < 400:
-                    return response.json() if response.content else None
+                    return self._decode(response, method, endpoint)
+                if response.status_code == 406:
+                    # The web app of Immich for a JSON request
+                    raise self._not_the_api(method, endpoint)
                 if (response.status_code not in self.RETRY_STATUS or
                         last_attempt):
                     raise ImmichError('{} {} failed: HTTP {} {}'.format(
@@ -96,6 +99,20 @@ class ImmichApiClient(object):
                         response.text[:200]))
                 delay = self._retry_after(response, attempt)
             time.sleep(delay)
+
+    def _decode(self, response, method, endpoint):
+        if not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError:
+            # i.e. the web app of Immich which answers with HTML
+            raise self._not_the_api(method, endpoint)
+
+    def _not_the_api(self, method, endpoint):
+        return ImmichError(
+            '{} {} failed: not a response of the Immich API, api_url must '
+            'end with /api'.format(method, endpoint))
 
     def _retry_after(self, response, attempt):
         try:
@@ -304,7 +321,8 @@ class Immich(PluginBase):
 
         try:
             return Sync(self).run()
-        except ImmichError as e:
+        except Exception as e:
+            # Elodie only logs other exceptions of plugins with --debug
             self.display('Immich sync failed: {}'.format(e))
             return (False, 0)
 
@@ -406,6 +424,7 @@ class Sync(object):
         self.favorites = {True: set(), False: set()}
         # States to save once the changes are applied in Immich
         self.pending = {}
+        # Album name -> IDs of the albums with the name, the oldest first
         self.album_ids = {}
         self.counts = {'assets': 0, 'files_changed': 0, 'files_moved': 0,
                        'immich_changed': 0, 'skipped': 0, 'errors': 0}
@@ -482,7 +501,7 @@ class Sync(object):
                 continue
             # Albums with the same name are one album in the file, new
             #  assets are added to the oldest one.
-            self.album_ids.setdefault(name, album['id'])
+            self.album_ids.setdefault(name, []).append(album['id'])
             if not album.get('assetCount'):
                 continue
             album_filter = dict(self.library_filter())
@@ -576,7 +595,16 @@ class Sync(object):
             return path
 
         # The album can be part of the folder, Elodie moves the file there.
+        #  Elodie reports it as a failure when the file is there already.
+        filesystem = self.plugin.filesystem
         media = Base.get_class_by_file(path, self.subclasses)
+        metadata = media.get_metadata()
+        destination = os.path.join(
+            self.plugin.elodie_library_path,
+            filesystem.get_folder_path(metadata),
+            filesystem.get_file_name(metadata))
+        if filesystem.is_same_file(path, destination):
+            return path
         new_path = self.plugin.filesystem.process_file(
             path, self.plugin.elodie_library_path, media,
             move=True, allowDuplicate=True)
@@ -610,18 +638,21 @@ class Sync(object):
         for name, asset_ids in sorted(self.album_additions.items()):
             try:
                 if name not in self.album_ids:
-                    self.album_ids[name] = self.client.create_album(name)['id']
+                    album = self.client.create_album(name)
+                    self.album_ids[name] = [album['id']]
                     self.log('Created album {}'.format(name))
                 failed |= self.client.add_assets_to_album(
-                    self.album_ids[name], asset_ids)
+                    self.album_ids[name][0], asset_ids)
             except ImmichError as e:
                 self.plugin.display('Could not add {} assets to album {}: '
                                     '{}'.format(len(asset_ids), name, e))
                 failed |= asset_ids
         for name, asset_ids in sorted(self.album_removals.items()):
             try:
-                failed |= self.client.remove_assets_from_album(
-                    self.album_ids[name], asset_ids)
+                # From all albums with the name, the asset can be in any
+                for album_id in self.album_ids[name]:
+                    failed |= self.client.remove_assets_from_album(
+                        album_id, asset_ids)
             except ImmichError as e:
                 self.plugin.display('Could not remove {} assets from album '
                                     '{}: {}'.format(len(asset_ids), name, e))

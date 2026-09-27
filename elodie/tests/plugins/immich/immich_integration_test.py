@@ -91,8 +91,14 @@ def setup():
     # Album names of the test, the albums of all tests are in the same Immich
     def names(*albums):
         return ';'.join('%s %s' % (folder, a) for a in albums)
-    yield library, Server(folder), names
+    server = Server(folder)
+    yield library, server, names
     shutil.rmtree(library)
+    # Every run of the plugin searches all albums, keep only the ones of
+    #  other tests
+    for album in server.call('GET', '/albums'):
+        if album['albumName'].startswith(folder):
+            server.call('DELETE', '/albums/%s' % album['id'])
     if hasattr(load_config, 'config'):
         del load_config.config
 
@@ -224,3 +230,15 @@ def test_dry_run_changes_nothing(setup):
     assert server.albums_of('a.jpg') == []
     assert server.assets()['a.jpg']['isFavorite'] is False
     assert file_state(library, 'a.jpg') == ([names('Summer')], True, path)
+
+def test_api_url_without_api_is_reported(setup):
+    library, server, names = setup
+    url = ENV['API_URL'][:-len('/api')]
+    plugin = Immich()
+    plugin.client = ImmichApiClient(url, ENV['API_KEY'])
+
+    with mock.patch.object(Immich, 'display') as display:
+        result = plugin.batch()
+
+    assert result == (False, 0)
+    assert 'api_url must end with /api' in display.call_args[0][0], display.call_args

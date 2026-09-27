@@ -28,8 +28,12 @@ EXTERNAL_LIBRARY_PATH = '/external/library'
 class FakeImmich(object):
     """In-memory Immich with the methods of ImmichApiClient.
 
-    scan() does what Immich does with an external library: a file at a new
-    path becomes a new asset, an asset whose file is gone becomes offline.
+    scan() does what Immich 3.2 does with an external library: a file at a
+    new path becomes a new asset, an asset whose file is gone becomes offline
+    and is moved to the trash, and it is restored with its albums and
+    favorite when its file is back at its path (LibraryService in Immich).
+    Like Immich 3.2, search includes offline and trashed assets and the
+    assets of partners unless filtered.
     """
 
     def __init__(self, library, version=(3, 2, 2)):
@@ -42,27 +46,38 @@ class FakeImmich(object):
         self.fail_album_additions = False
 
     def scan(self):
-        paths = {asset['originalPath']: asset for asset in self.assets.values()
-                 if not asset['isOffline']}
+        own = [a for a in self.assets.values() if a['ownerId'] == 'me']
         found = set()
         for dirname, dirnames, filenames in os.walk(self.library):
             for filename in filenames:
                 relative = os.path.relpath(os.path.join(dirname, filename), self.library)
                 path = EXTERNAL_LIBRARY_PATH + '/' + relative.replace(os.sep, '/')
                 found.add(path)
-                if path not in paths:
-                    asset_id = 'asset-%d' % next(self.ids)
-                    self.assets[asset_id] = {
-                        'id': asset_id, 'originalPath': path, 'isFavorite': False,
-                        'isOffline': False, 'visibility': 'timeline'}
-        for path, asset in paths.items():
-            if path not in found:
+                existing = [a for a in own if a['originalPath'] == path]
+                if existing:
+                    if existing[0]['isOffline']:
+                        # Restored with its albums and favorite
+                        existing[0]['isOffline'] = False
+                        existing[0]['isTrashed'] = False
+                else:
+                    self.add_asset(path)
+        for asset in own:
+            if asset['originalPath'] not in found and not asset['isOffline']:
                 asset['isOffline'] = True
+                asset['isTrashed'] = True
+
+    def add_asset(self, path, owner='me'):
+        asset_id = 'asset-%d' % next(self.ids)
+        self.assets[asset_id] = {
+            'id': asset_id, 'originalPath': path, 'isFavorite': False, 'ownerId': owner,
+            'isOffline': False, 'isTrashed': False, 'visibility': 'timeline'}
+        return self.assets[asset_id]
 
     # Helpers for the tests
     def asset_for(self, name):
         matches = [a for a in self.assets.values()
-                   if not a['isOffline'] and a['originalPath'].endswith(name)]
+                   if not a['isOffline'] and not a['isTrashed'] and a['ownerId'] == 'me' and
+                   a['originalPath'].endswith(name)]
         assert len(matches) == 1, (name, matches)
         return matches[0]
 
@@ -84,6 +99,9 @@ class FakeImmich(object):
     # Methods of ImmichApiClient
     def get_version(self):
         return self.version
+
+    def get_my_user_id(self):
+        return 'me'
 
     def get_albums(self):
         self.requests.append('get_albums')
@@ -123,7 +141,9 @@ class FakeImmich(object):
         for asset in sorted(self.assets.values(), key=lambda a: a['id']):
             if not asset['originalPath'].startswith(prefix):
                 continue
-            if asset['isOffline'] != search_filter['isOffline']['eq']:
+            if 'isOffline' in search_filter and asset['isOffline'] != search_filter['isOffline']['eq']:
+                continue
+            if 'trashedAt' in search_filter and asset['isTrashed']:
                 continue
             if asset['visibility'] not in search_filter['visibility']['in']:
                 continue
@@ -575,12 +595,18 @@ def test_state_of_assets_which_are_gone_is_removed(library, immich):
     create_photo(library, 'b.jpg')
     immich.scan()
     run_batch(immich)
+    a, b = immich.asset_for('a.jpg')['id'], immich.asset_for('b.jpg')['id']
     os.remove(find_file(library, 'b.jpg'))
     immich.scan()
 
+    # Offline, Immich can restore it until it is removed from the trash
+    run_batch(immich)
+    offline = sorted(Immich().load_state())
+    del immich.assets[b]
     run_batch(immich)
 
-    assert list(Immich().load_state()) == [immich.asset_for('a.jpg')['id']]
+    assert offline == sorted([a, b])
+    assert list(Immich().load_state()) == [a]
 
 # The API client
 def response(status, json_body=None, headers=None):
@@ -756,11 +782,14 @@ def test_client_reports_an_api_url_without_api(status, body):
             client.get_version()
     assert request.call_count == 1
 
-def create_file(library, name, fixture):
+def create_file(library, name, fixture, album='', rating=''):
     """Import a file into the library with Elodie, so it has the path Elodie
     gives it."""
     source = os.path.join(os.path.dirname(library), name)
     shutil.copyfile(helper.get_file(fixture), source)
+    media = Video(source) if name.endswith(('.mov', '.webm')) else Photo(source)
+    media.set_album(album)
+    media.set_rating(rating)
     media = Video(source) if name.endswith(('.mov', '.webm')) else Photo(source)
     return FileSystem().process_file(source, library, media, move=True)
 
@@ -879,3 +908,84 @@ def test_two_runs_at_the_same_time_are_not_possible(library, immich):
     assert mock.call('Another sync with Immich is running') in display.call_args_list
     assert requests_while_locked == []
     assert after == (True, 1), after
+
+def test_restored_asset_does_not_bring_back_what_was_removed(library, immich):
+    # Immich restores an offline asset with its albums when its file is back
+    #  at its path, i.e. when an album is added and removed again.
+    create_file(library, 'a.jpg', 'plain.jpg', album='Summer')
+    immich.scan()
+    run_batch(immich)
+    first = immich.asset_for('a.jpg')
+    immich.albums[immich.add_album('Trip')]['assetIds'].add(first['id'])
+    run_batch(immich)
+    immich.scan()
+    run_batch(immich)
+    # Trip removed from the new asset, the file goes back to Summer/
+    immich.albums[immich.album_id('Trip')]['assetIds'].discard(immich.asset_for('a.jpg')['id'])
+    run_batch(immich)
+
+    immich.scan()
+    assert immich.asset_for('a.jpg')['id'] == first['id']
+    assert immich.albums_of('a.jpg') == ['Summer', 'Trip']
+    run_batch(immich)
+    immich.scan()
+    result = run_batch(immich)
+
+    assert result == (True, 0), result
+    assert file_state(library, 'a.jpg') == (['Summer'], False)
+    assert immich.albums_of('a.jpg') == ['Summer']
+
+def test_restored_asset_does_not_bring_back_a_removed_favorite(library, immich):
+    create_file(library, 'a.jpg', 'plain.jpg', album='Summer', rating=5)
+    immich.scan()
+    run_batch(immich)
+    first = immich.asset_for('a.jpg')
+    immich.albums[immich.add_album('Trip')]['assetIds'].add(first['id'])
+    run_batch(immich)
+    immich.scan()
+    run_batch(immich)
+    second = immich.asset_for('a.jpg')
+    second['isFavorite'] = False
+    immich.albums[immich.album_id('Trip')]['assetIds'].discard(second['id'])
+    run_batch(immich)
+    immich.scan()
+    run_batch(immich)
+
+    assert immich.asset_for('a.jpg')['id'] == first['id']
+    assert file_state(library, 'a.jpg') == (['Summer'], False)
+    assert immich.asset_for('a.jpg')['isFavorite'] is False
+
+def test_trashed_assets_are_not_synced(library, immich):
+    path = create_photo(library, 'a.jpg', album='Summer')
+    immich.scan()
+    run_batch(immich)
+    asset = immich.asset_for('a.jpg')
+    asset['isTrashed'] = True
+    immich.albums[immich.add_album('Trip')]['assetIds'].add(asset['id'])
+
+    result = run_batch(immich)
+
+    assert result == (True, 0), result
+    assert find_file(library, 'a.jpg') == path
+    assert file_state(library, 'a.jpg') == (['Summer'], False)
+    # Restored from the trash it is synced again
+    asset['isTrashed'] = False
+    run_batch(immich)
+    assert file_state(library, 'a.jpg') == (['Summer', 'Trip'], False)
+
+def test_assets_of_partners_are_not_synced(library, immich):
+    # i.e. a partner with an external library of the same folder
+    path = create_photo(library, 'a.jpg', album='Summer')
+    immich.scan()
+    theirs = immich.add_asset(immich.asset_for('a.jpg')['originalPath'], owner='partner')
+    theirs['isFavorite'] = True
+    immich.albums[immich.add_album('Theirs')]['assetIds'].add(theirs['id'])
+
+    run_batch(immich)
+    result = run_batch(immich)
+
+    assert result == (True, 0), result
+    assert find_file(library, 'a.jpg') == path
+    assert file_state(library, 'a.jpg') == (['Summer'], False)
+    assert theirs['isFavorite'] is True
+    assert not any(theirs['id'] in str(r) for r in immich.requests)

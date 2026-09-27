@@ -25,9 +25,11 @@ def environ(monkeypatch):
     monkeypatch.undo()
     reload(constants)
 
-def test_debug():
-    # This seems pointless but in CI we explicitly modify the file to be True
-    assert constants.debug == constants.debug, constants.debug
+def test_debug_and_dry_run_are_off_by_default():
+    # --debug and --dry-run turn them on. CI sets debug to True in the file
+    #  for coverage, so only its type is checked.
+    assert isinstance(constants.debug, bool), constants.debug
+    assert constants.dry_run is False, constants.dry_run
 
 def test_application_directory_default(environ):
     environ.delenv('ELODIE_APPLICATION_DIRECTORY', raising=False)

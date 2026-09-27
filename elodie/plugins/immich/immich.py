@@ -323,6 +323,16 @@ class Immich(PluginBase):
                 self.display(error)
             return (False, 0)
 
+        lock = self.lock()
+        if lock is None:
+            self.display('Another sync with Immich is running')
+            return (False, 0)
+        try:
+            return self._batch()
+        finally:
+            lock.close()
+
+    def _batch(self):
         try:
             version = self.client.get_version()
         except ImmichError as e:
@@ -354,9 +364,42 @@ class Immich(PluginBase):
         return os.path.join(self.elodie_library_path,
                             *relative_path.split('/'))
 
+    def lock(self):
+        """Lock the sync so only one runs at a time, i.e. when a long first
+        run is still running when cron starts the next one.
+
+        :returns: the lock file, closing it releases the lock, or None if
+            another sync has the lock
+        """
+        lock_file = open(self.db.db_file + '.lock', 'a')
+        try:
+            if os.name == 'nt':
+                import msvcrt
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            lock_file.close()
+            return None
+        return lock_file
+
     # State of the plugin database
     def load_state(self):
-        return self.db.get('assets') or {}
+        try:
+            return self.db.get('assets') or {}
+        except ValueError:
+            # The state can be rebuilt, the first sync of an asset keeps
+            #  everything of both sides.
+            corrupt_file = self.db.db_file + '.corrupt'
+            self.display('The state of the plugin in {} could not be read, it '
+                         'was moved to {} and all files are synced '
+                         'again'.format(self.db.db_file, corrupt_file))
+            if not constants.dry_run:
+                os.replace(self.db.db_file, corrupt_file)
+                with open(self.db.db_file, 'w') as f:
+                    f.write('{}')
+            return {}
 
     def save_state(self, state):
         if constants.dry_run:
@@ -457,8 +500,11 @@ class Sync(object):
         }
 
     def run(self):
+        # Only what is needed, a library can have hundreds of thousands
         assets = {
-            asset['id']: asset
+            asset['id']: {'id': asset['id'],
+                          'originalPath': asset['originalPath'],
+                          'isFavorite': asset.get('isFavorite', False)}
             for asset in self.client.search_assets(self.library_filter())
         }
         memberships = self.get_album_memberships()

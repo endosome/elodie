@@ -835,3 +835,47 @@ def test_album_names_of_files_which_are_no_folder_name_stay_as_they_are(library,
     assert result == (True, 0), result
     assert get_album_names(Photo(find_file(library, 'a.jpg')).get_album()) == ['2024/Trips', 'Family', 'Summer']
     assert immich.albums_of('a.jpg') == ['Family', 'Summer']
+
+def test_unreadable_state_is_moved_aside_and_rebuilt(library, immich):
+    # i.e. cut off by a crash. The first sync keeps everything of both sides
+    #  so nothing is lost when it starts over.
+    create_photo(library, 'a.jpg', album='Summer')
+    immich.scan()
+    run_batch(immich)
+    plugin = Immich()
+    with open(plugin.db.db_file) as f:
+        content = f.read()
+    with open(plugin.db.db_file, 'w') as f:
+        f.write(content[:len(content) // 2])
+    immich.add_album('Trip', ['a.jpg'])
+
+    with mock.patch.object(Immich, 'display') as display:
+        result = run_batch(immich)
+        second = run_batch(immich)
+
+    messages = [c[0][0] for c in display.call_args_list]
+    assert result[0] is True, messages
+    assert any('could not be read, it was moved to %s.corrupt' % plugin.db.db_file in m for m in messages), messages
+    assert os.path.isfile(plugin.db.db_file + '.corrupt')
+    assert file_state(library, 'a.jpg') == (['Summer', 'Trip'], False)
+    assert second[0] is True, messages
+
+def test_two_runs_at_the_same_time_are_not_possible(library, immich):
+    # i.e. a long first run and the next run started by cron
+    create_photo(library, 'a.jpg', album='Summer')
+    immich.scan()
+    first = Immich()
+    first.client = immich
+    lock = first.lock()
+    assert lock is not None
+
+    with mock.patch.object(Immich, 'display') as display:
+        result = run_batch(immich)
+    requests_while_locked = list(immich.requests)
+    lock.close()
+    after = run_batch(immich)
+
+    assert result == (False, 0)
+    assert mock.call('Another sync with Immich is running') in display.call_args_list
+    assert requests_while_locked == []
+    assert after == (True, 1), after

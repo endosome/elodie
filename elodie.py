@@ -131,7 +131,8 @@ def _batch(debug, dry_run):
     constants.debug = debug
     constants.dry_run = dry_run
     plugins = Plugins()
-    plugins.run_batch()
+    if not plugins.run_batch():
+        sys.exit(1)
        
 
 @click.command('import')

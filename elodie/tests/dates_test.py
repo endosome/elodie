@@ -162,3 +162,28 @@ def test_dates_before_1970_where_the_computer_cannot_handle_them(monkeypatch):
 def test_time_zone_at(latitude, longitude, expected):
     zone = dates.time_zone_at(latitude, longitude)
     assert (zone.key if zone else None) == expected
+
+@pytest.mark.parametrize('position,zone,creation_date,utc', [
+    # Without a position the time zone of the computer
+    (None, 'Europe/Warsaw', '2021:07:01 00:30:00+02:00', '2021:06:30 22:30:00'),
+    (None, 'UTC', '2021:07:01 00:30:00+00:00', '2021:07:01 00:30:00'),
+    # With one the time zone where it was taken
+    ((40.7128, -74.006), 'Europe/Warsaw', '2021:07:01 00:30:00-04:00', '2021:07:01 04:30:00'),
+])
+def test_set_date_taken_of_video_writes_local_time_and_utc(position, zone, creation_date, utc):
+    # Like phones: QuickTime:CreationDate is the local time with its time
+    #  zone, QuickTime:CreateDate is in UTC as the specification says
+    tags = ['-GPS:all=', '-Keys:GPSCoordinates=', '-XMP:GPSLatitude=', '-XMP:GPSLongitude=', '-UserData:GPSCoordinates=']
+    if position:
+        tags = ['-XMP:GPSLatitude=%s' % position[0], '-XMP:GPSLongitude=%s' % position[1]]
+    temporary_folder, path = copy_with_tags('clip.mov', 'video.mov', *tags)
+
+    with helper.time_zone(zone):
+        status = Video(path).set_date_taken(datetime(2021, 7, 1, 0, 30, 0))
+        date_taken = Video(path).get_date_taken()
+    written = ExifTool().get_metadata(path)
+
+    assert status is True
+    assert written['QuickTime:CreationDate'] == creation_date, written['QuickTime:CreationDate']
+    assert written['QuickTime:CreateDate'] == utc, written['QuickTime:CreateDate']
+    assert date_taken[:6] == (2021, 7, 1, 0, 30, 0), date_taken

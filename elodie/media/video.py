@@ -6,7 +6,7 @@ objects (AVI, MOV, etc.).
 """
 
 # load modules
-from datetime import datetime
+from datetime import datetime, timezone
 
 import os
 import re
@@ -117,6 +117,31 @@ class Video(Media):
             return None
 
         return dates.local_time(seconds_since_epoch)
+
+    def get_date_taken_tags(self, time):
+        """Get the tags to write for a date taken, like phones write them:
+        QuickTime:CreationDate is the local time with its time zone, the
+        dates which are in UTC by the specification are in UTC. The time zone
+        is the one of the GPS position or else the one of the computer.
+
+        :param datetime time: The local date without a time zone.
+        :returns: dict
+        """
+        local = dates.localize(time, self.get_coordinate('latitude'),
+                               self.get_coordinate('longitude'))
+        offset = local.strftime('%z')
+        offset = '{}:{}'.format(offset[:3], offset[3:])
+        utc = local.astimezone(timezone.utc)
+
+        tags = {}
+        for key in self.exif_map['date_taken']:
+            if key in self.utc_date_keys:
+                tags[key] = utc.strftime('%Y:%m:%d %H:%M:%S')
+            elif key.startswith('QuickTime:CreationDate'):
+                tags[key] = time.strftime('%Y:%m:%d %H:%M:%S') + offset
+            else:
+                tags[key] = time.strftime('%Y:%m:%d %H:%M:%S')
+        return tags
 
     def normalize_date_string(self, value):
         """Convert dates like 2019-07-04, 2019:07:04 or 2019-07-04T12:00:00,

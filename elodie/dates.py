@@ -87,6 +87,22 @@ def time_zone_at(latitude, longitude):
         return None
 
 
+def localize(value, latitude=None, longitude=None):
+    """Add the time zone to a local date, the one of the GPS position where
+    it was taken or else the one of the computer.
+
+    :param datetime value: Local date, without a time zone.
+    :returns: datetime with a time zone
+    """
+    zone = time_zone_at(latitude, longitude)
+    if zone is not None:
+        return value.replace(tzinfo=zone)
+    # The offset of the computer's time zone at that date
+    offset = calendar.timegm(value.timetuple()) - to_timestamp(
+        wall_clock(value))
+    return value.replace(tzinfo=timezone(timedelta(seconds=round(offset))))
+
+
 def utc_to_local(value, latitude=None, longitude=None):
     """The local date of a UTC date, in the time zone of the GPS position
     where it was recorded or else in the one of the computer.

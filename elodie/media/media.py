@@ -269,14 +269,19 @@ class Media(Base):
                            date_taken=dates.wall_clock(time)):
             return True
 
-        tags = {}
-        formatted_time = time.strftime('%Y:%m:%d %H:%M:%S')
-        for key in self.exif_map['date_taken']:
-            tags[key] = formatted_time
-
-        status = self.__set_tags(tags)
+        status = self.__set_tags(self.get_date_taken_tags(time))
         self.reset_cache()
         return status
+
+    def get_date_taken_tags(self, time):
+        """Get the tags to write for a date taken. Photos store the date
+        as it is, without a time zone.
+
+        :param datetime time: The date without a time zone.
+        :returns: dict
+        """
+        formatted_time = time.strftime('%Y:%m:%d %H:%M:%S')
+        return {key: formatted_time for key in self.exif_map['date_taken']}
 
     def set_description(self, description):
         """Set description for a photo or video

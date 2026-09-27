@@ -2340,3 +2340,11 @@ def test_update_directory_listing_after_another_change():
     shutil.rmtree(temporary_folder)
 
     assert sidecars == [(os.path.join(folder, 'IMG_2.xmp'), False)], sidecars
+
+def test_parse_folder_name_with_empty_place_name_parts():
+    # i.e. a place without a city, or one cached by an older version
+    filesystem = FileSystem()
+    location_parts = re.findall('(%[^%]+)', '%city')
+
+    assert filesystem.parse_mask_for_location('%city', location_parts, {'city': None, 'default': 'Nevada'}) == 'Nevada'
+    assert filesystem.parse_mask_for_location('%city', location_parts, {'city': None}) == 'Unknown Location'

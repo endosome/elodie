@@ -8,12 +8,13 @@ import sys
 from unittest.mock import patch
 from tempfile import gettempdir
 
-from io import StringIO
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))))
 
 from . import helper
 from elodie import geolocation
+from elodie import constants
+from elodie.localstorage import Db
 
 os.environ['TZ'] = 'GMT'
 
@@ -173,11 +174,12 @@ def test_lookup_with_prefer_english_names_false():
     assert res['address']['city'] == u'\u041d\u0430\u0433\u043e\u0440\u043d\u044b\u0439 \u0440\u0430\u0439\u043e\u043d', res
 
 @mock.patch('elodie.constants.debug', True)
-def test_lookup_debug_mapquest_url():
-    out = StringIO()
-    sys.stdout = out
-    res = geolocation.lookup(location='Sunnyvale, CA')
-    output = out.getvalue()
+@mock.patch('elodie.geolocation.__KEY__', 'key')
+def test_lookup_debug_mapquest_url(capsys):
+    with mock.patch('elodie.geolocation.requests.get') as get:
+        get.return_value.json.return_value = {'info': {'statuscode': 400}}
+        geolocation.lookup(location='Sunnyvale, CA')
+    output = capsys.readouterr().out
     assert 'MapQuest url:' in output, output
 
 @mock.patch('elodie.constants.location_db', return_value='%s/location.json-place-name-deprecated-string-cached' % gettempdir())
@@ -263,3 +265,86 @@ def test_parse_result_with_unknown_lat_lon():
 
     res = geolocation.parse_result(results)
     assert res is None, res
+
+
+# A reverse geocoding result of MapQuest without a city, i.e. in the
+#  countryside
+NO_CITY = {'info': {'statuscode': 0}, 'results': [{'locations': [{
+    'adminArea1Type': 'Country', 'adminArea1': 'US', 'adminArea3Type': 'State', 'adminArea3': 'Nevada',
+    'adminArea5Type': 'City', 'adminArea5': '', 'latLng': {'lat': 38.5, 'lng': -117.0}}]}]}
+
+@mock.patch('elodie.geolocation.__KEY__', 'key')
+def test_place_name_without_a_city():
+    with mock.patch('elodie.geolocation.requests.get') as get:
+        get.return_value.json.return_value = NO_CITY
+        place = geolocation.place_name(38.5, -117.0)
+        # Cached with a default
+        cached = geolocation.place_name(38.5, -117.0)
+
+    assert place == {'state': 'Nevada', 'country': 'US', 'default': 'Nevada'}, place
+    assert cached == place, cached
+    assert get.call_count == 1
+
+@pytest.mark.parametrize('cached,expected', [
+    # Cached by older versions: without a default or with empty parts
+    ({'city': 'Sunnyvale'}, {'city': 'Sunnyvale', 'default': 'Sunnyvale'}),
+    ({'city': None, 'state': 'Nevada', 'default': None}, {'state': 'Nevada', 'default': 'Nevada'}),
+])
+def test_place_name_cached_by_older_versions(cached, expected):
+    db = Db()
+    db.add_location(38.5, -117.0, cached, True)
+
+    assert geolocation.place_name(38.5, -117.0) == expected
+
+@pytest.mark.parametrize('config,expected', [
+    ('[MapQuest]\nkey=abc\n', 'abc'),
+    # config.ini-sample
+    ('[MapQuest]\nkey=your-api-key-goes-here\n', None),
+    ('[MapQuest]\nkey=\n', None),
+    ('[MapQuest]\nprefer_english_names=True\n', None),
+    ('', None),
+])
+def test_get_key(monkeypatch, config, expected):
+    monkeypatch.setattr(constants, 'mapquest_key', None)
+    with open('%s/config.ini' % constants.application_directory(), 'w') as f:
+        f.write(config)
+
+    assert geolocation.get_key() == expected
+
+@pytest.mark.parametrize('value,expected', [
+    ('True', True), ('true', True), ('yes', True), ('1', True),
+    ('False', False), ('false', False), ('no', False), ('0', False),
+])
+def test_get_prefer_english_names(value, expected):
+    with open('%s/config.ini' % constants.application_directory(), 'w') as f:
+        f.write('[MapQuest]\nprefer_english_names=%s\n' % value)
+
+    assert geolocation.get_prefer_english_names() is expected
+
+@mock.patch('elodie.geolocation.__KEY__', 'key')
+def test_lookup_has_a_timeout():
+    # An unresponsive server must not stop an import forever
+    with mock.patch('elodie.geolocation.requests.get') as get:
+        get.return_value.json.return_value = {'info': {'statuscode': 400}}
+        geolocation.lookup(location='Sunnyvale, CA')
+
+    assert get.call_args[1]['timeout'] == 30
+
+@mock.patch('elodie.geolocation.__KEY__', 'key')
+def test_lookup_with_an_invalid_response(capsys):
+    with mock.patch('elodie.geolocation.requests.get') as get:
+        get.return_value.json.side_effect = ValueError('Expecting value')
+        get.return_value.text = '<html>Service Unavailable</html>'
+        res = geolocation.lookup(location='Sunnyvale, CA')
+
+    assert res is None
+    assert 'MapQuest lookup failed: Expecting value <html>Service Unavailable</html>' in capsys.readouterr().err
+
+@mock.patch('elodie.geolocation.__KEY__', 'key')
+def test_lookup_when_mapquest_is_not_reachable(capsys):
+    import requests
+    with mock.patch('elodie.geolocation.requests.get', side_effect=requests.ConnectionError('refused')):
+        res = geolocation.lookup(location='Sunnyvale, CA')
+
+    assert res is None
+    assert 'MapQuest lookup failed: refused' in capsys.readouterr().err

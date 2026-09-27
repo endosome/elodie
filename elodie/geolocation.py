@@ -18,6 +18,15 @@ __DEFAULT_LOCATION__ = 'Unknown Location'
 __PREFER_ENGLISH_NAMES__ = None
 __EXIFTOOL_AVAILABLE__ = None
 
+#: The key in config.ini-sample, which is no key.
+__KEY_PLACEHOLDER__ = 'your-api-key-goes-here'
+
+#: Seconds to wait for a response of MapQuest.
+__TIMEOUT__ = 30
+
+#: Parts of a place name from the most to the least specific.
+__PLACE_NAME_PARTS__ = ('city', 'town', 'state', 'country')
+
 
 def coordinates_by_name(name):
     # Try to get cached location first
@@ -193,7 +202,12 @@ def get_key():
     if('MapQuest' not in config):
         return None
 
-    __KEY__ = config['MapQuest']['key']
+    # Without a key, i.e. the one of config.ini-sample, ExifTool is used
+    key = config['MapQuest'].get('key', '').strip()
+    if not key or key == __KEY_PLACEHOLDER__:
+        return None
+
+    __KEY__ = key
     return __KEY__
 
 def get_prefer_english_names():
@@ -212,7 +226,9 @@ def get_prefer_english_names():
     if('prefer_english_names' not in config['MapQuest']):
         return False
 
-    __PREFER_ENGLISH_NAMES__ = bool(config['MapQuest']['prefer_english_names'])
+    # bool('False') is True
+    value = config['MapQuest']['prefer_english_names'].strip().lower()
+    __PREFER_ENGLISH_NAMES__ = value in ('true', 'yes', 'on', '1')
     return __PREFER_ENGLISH_NAMES__
 
 def place_name(lat, lon):
@@ -233,7 +249,9 @@ def place_name(lat, lon):
     # We check that it's a dict to coerce an upgrade of the location
     #  db from a string location to a dictionary. See gh-160.
     if(isinstance(cached_place_name, dict)):
-        return cached_place_name
+        cached_place_name = normalize_place_name(cached_place_name)
+        if cached_place_name:
+            return cached_place_name
 
     lookup_place_name = {}
     
@@ -246,19 +264,16 @@ def place_name(lat, lon):
             address = geolocation_info['address']
             # gh-386 adds support for town
             # taking precedence after city for backwards compatability
-            for loc in ['city', 'town', 'state', 'country']:
-                if(loc in address):
+            for loc in __PLACE_NAME_PARTS__:
+                if(address.get(loc)):
                     lookup_place_name[loc] = address[loc]
-                    # In many cases the desired key is not available so we
-                    #  set the most specific as the default.
-                    if('default' not in lookup_place_name):
-                        lookup_place_name['default'] = address[loc]
     else:
         # Use ExifTool as alternative when MapQuest key is not configured
         exiftool_result = exiftool_place_name(lat, lon)
         if exiftool_result is not None:
             lookup_place_name = exiftool_result
 
+    lookup_place_name = normalize_place_name(lookup_place_name)
     if(lookup_place_name):
         db.add_location(lat, lon, lookup_place_name)
         # TODO: Maybe this should only be done on exit and not for every write.
@@ -268,6 +283,24 @@ def place_name(lat, lon):
         lookup_place_name = lookup_place_name_default
 
     return lookup_place_name
+
+
+def normalize_place_name(place):
+    """Remove the parts of a place name which are empty and set its
+    default to the most specific part, i.e. for a place without a city or
+    one cached by an older version.
+
+    :returns: dict, empty if no part is known
+    """
+    place = {key: value for key, value in place.items() if value}
+    if not place.get('default'):
+        for part in __PLACE_NAME_PARTS__:
+            if place.get(part):
+                place['default'] = place[part]
+                break
+    if 'default' not in place:
+        return {}
+    return place
 
 
 def lookup(**kwargs):
@@ -305,14 +338,15 @@ def lookup(**kwargs):
               )
         # log the MapQuest url gh-446
         log.info('MapQuest url: %s' % (url))
-        r = requests.get(url, headers=headers)
-        return parse_result(r.json())
+        r = requests.get(url, headers=headers, timeout=__TIMEOUT__)
     except requests.exceptions.RequestException as e:
-        log.error(e)
+        log.error('MapQuest lookup failed: %s' % e)
         return None
+
+    try:
+        return parse_result(r.json())
     except ValueError as e:
-        log.error(r.text)
-        log.error(e)
+        log.error('MapQuest lookup failed: %s %s' % (e, r.text[:200]))
         return None
 
 
@@ -357,7 +391,9 @@ def parse_result_address(result):
         return None
 
     index_found = False
-    addresses = {'city': None, 'state': None, 'country': None}
+    # Only the ones which are found, i.e. a place can have no city
+    addresses = {}
+    types = ('city', 'state', 'country')
     result_compat = {}
     result_compat['address'] = {}
 
@@ -377,7 +413,8 @@ def parse_result_address(result):
             #   and store the index by parsing the key
             key_prefix = key[:-4]
             key_index = key[-5:-4]
-            if(locations[key].lower() in addresses):
+            if(locations[key].lower() in types and
+                    locations.get(key_prefix)):
                 addresses[locations[key].lower()] = locations[key_prefix]
                 index_found = True
 

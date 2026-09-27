@@ -1,4 +1,5 @@
 # Project imports
+import io
 import unittest.mock as mock
 import os
 import sys
@@ -316,3 +317,26 @@ plugins=Dummy
         del load_config.config
 
     assert results == {(False, 3): False, (True, 3): True, None: True}, results
+
+def test_plugin_db_is_not_corrupted_by_an_interrupted_write():
+    # i.e. when a run is stopped with Ctrl-C while saving
+    db = PluginDb('interrupted')
+    db.set('key', 'old value')
+    real_open = io.open
+
+    def open_and_fail(path, mode='r', *args, **kwargs):
+        f = real_open(path, mode, *args, **kwargs)
+        if 'w' in mode:
+            f.write(b'{"key": "new val')
+            f.flush()
+            raise KeyboardInterrupt()
+        return f
+
+    with mock.patch('elodie.plugins.plugins.io.open', side_effect=open_and_fail):
+        try:
+            db.set('key', 'new value')
+        except KeyboardInterrupt:
+            pass
+
+    assert db.get('key') == 'old value'
+    assert os.listdir(os.path.dirname(db.db_file)) == ['interrupted.json']

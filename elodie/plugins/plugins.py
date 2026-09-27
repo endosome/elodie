@@ -5,6 +5,7 @@ Plugin object.
 """
 
 import io
+import os
 
 from json import dumps, loads
 from importlib import import_module
@@ -100,9 +101,7 @@ class PluginDb(object):
             db = loads(data)
 
         db[key] = value
-        new_content = dumps(db, ensure_ascii=False).encode('utf8')
-        with io.open(self.db_file, 'wb') as f:
-            f.write(new_content)
+        self._write(db)
 
     def get_all(self):
         with io.open(self.db_file, 'r') as f:
@@ -119,9 +118,21 @@ class PluginDb(object):
 
         # delete key without throwing an exception
         db.pop(key, None)
+        self._write(db)
+
+    def _write(self, db):
+        # Written to another file which then replaces the database, so a
+        #  write which is interrupted (i.e. Ctrl-C) does not corrupt it.
         new_content = dumps(db, ensure_ascii=False).encode('utf8')
-        with io.open(self.db_file, 'wb') as f:
-            f.write(new_content)
+        temporary_file = self.db_file + '.tmp'
+        try:
+            with io.open(temporary_file, 'wb') as f:
+                f.write(new_content)
+            os.replace(temporary_file, self.db_file)
+        except BaseException:
+            if os.path.exists(temporary_file):
+                os.remove(temporary_file)
+            raise
 
 
 class Plugins(object):

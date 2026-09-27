@@ -72,12 +72,17 @@ class FileSystem(object):
         # Perform actual operation
         if operation_type == 'move':
             shutil.move(src, dst)
+            self.update_directory_listing(src, exists=False)
+            self.update_directory_listing(dst, exists=True)
         elif operation_type == 'copy':
             compatability._copyfile(src, dst)
+            self.update_directory_listing(dst, exists=True)
         elif operation_type == 'remove':
             os.remove(src)
+            self.update_directory_listing(src, exists=False)
         elif operation_type == 'send2trash':
             send2trash(src)
+            self.update_directory_listing(src, exists=False)
         return True
 
     def create_directory(self, directory_path):
@@ -764,21 +769,57 @@ class FileSystem(object):
         return set(self.default_sidecar_extensions)
 
     def list_directory(self, directory):
-        """List the files of a directory. The listing is cached until the
-        directory changes since it is needed for each file in it.
+        """List the files of a directory, indexed by their lowercase name
+        without the extension: {'img_1234': ['IMG_1234.CR3', 'IMG_1234.xmp'],
+        'img_1234.cr3': ['IMG_1234.CR3.xmp']}. The index is cached until the
+        directory changes since it is needed for each file in it, looking up
+        a name must not depend on the number of files in the directory.
 
         :param str directory: Path of the directory.
-        :returns: list of file names
+        :returns: dict of lists of file names, sorted
         """
         try:
             modified = os.stat(directory).st_mtime_ns
         except OSError:
-            return []
+            return {}
         cached = self.directory_listings.get(directory)
         if cached is None or cached[0] != modified:
-            cached = (modified, os.listdir(directory))
+            index = {}
+            for entry in sorted(os.listdir(directory)):
+                base = os.path.splitext(entry)[0].lower()
+                index.setdefault(base, []).append(entry)
+            cached = (modified, index)
             self.directory_listings[directory] = cached
         return cached[1]
+
+    def update_directory_listing(self, path, exists):
+        """Update the cached listing of the directory of a file which was
+        added or removed by us, so it does not have to be read again for the
+        next file, i.e. when each file is moved to the trash after its
+        import.
+
+        :param str path: Path of the file.
+        :param bool exists: Whether the file was added or removed.
+        """
+        directory, name = os.path.split(path)
+        cached = self.directory_listings.get(directory)
+        if cached is None:
+            return
+        try:
+            modified = os.stat(directory).st_mtime_ns
+        except OSError:
+            del self.directory_listings[directory]
+            return
+        index = cached[1]
+        base = os.path.splitext(name)[0].lower()
+        entries = index.get(base, [])
+        if exists and name not in entries:
+            index[base] = sorted(entries + [name])
+        elif not exists and name in entries:
+            entries.remove(name)
+            if not entries:
+                del index[base]
+        self.directory_listings[directory] = (modified, index)
 
     def find_sidecars(self, file_path):
         """Find the sidecar files of a file in the same directory with the
@@ -794,19 +835,17 @@ class FileSystem(object):
             return []
 
         directory, name = os.path.split(file_path)
+        index = self.list_directory(directory)
         stem = os.path.splitext(name)[0].lower()
+        candidates = [(entry, True) for entry in index.get(name.lower(), [])]
+        candidates += [(entry, False) for entry in index.get(stem, [])]
         sidecars = []
-        for entry in sorted(self.list_directory(directory)):
-            base, extension = os.path.splitext(entry)
-            if extension[1:].lower() not in extensions:
+        for entry, full_name_style in sorted(candidates):
+            if os.path.splitext(entry)[1][1:].lower() not in extensions:
                 continue
             path = os.path.join(directory, entry)
-            if not os.path.isfile(path):
-                continue
-            if base.lower() == stem:
-                sidecars.append((path, False))
-            elif base.lower() == name.lower():
-                sidecars.append((path, True))
+            if os.path.isfile(path):
+                sidecars.append((path, full_name_style))
         return sidecars
 
     def is_sidecar_shared(self, sidecar, file_path):
@@ -824,11 +863,16 @@ class FileSystem(object):
         # IMG_1234 for IMG_1234.xmp or IMG_1234.CR3 for IMG_1234.CR3.xmp
         sidecar_base = os.path.splitext(os.path.basename(sidecar))[0].lower()
         directory = os.path.dirname(sidecar)
-        for entry in self.list_directory(directory):
-            base, extension = os.path.splitext(entry)
-            if extension[1:].lower() not in supported_extensions:
-                continue
-            if sidecar_base not in (base.lower(), entry.lower()):
+        index = self.list_directory(directory)
+        # IMG_1234.JPG for IMG_1234.xmp, IMG_1234.CR3 for IMG_1234.CR3.xmp
+        candidates = index.get(sidecar_base, []) + [
+            entry
+            for entry in index.get(os.path.splitext(sidecar_base)[0], [])
+            if entry.lower() == sidecar_base
+        ]
+        for entry in candidates:
+            extension = os.path.splitext(entry)[1][1:].lower()
+            if extension not in supported_extensions:
                 continue
             path = os.path.join(directory, entry)
             if os.path.isfile(path) and not self.is_same_file(path, file_path):

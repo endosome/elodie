@@ -2205,8 +2205,47 @@ def test_list_directory_is_cached_until_the_directory_changes():
     shutil.rmtree(temporary_folder)
 
     assert calls_before_change == 1, calls_before_change
-    assert sorted(first) == sorted(second) == ['a.jpg']
-    assert sorted(third) == ['a.jpg', 'b.jpg'], third
+    assert first == second == {'a': ['a.jpg']}, first
+    assert third == {'a': ['a.jpg'], 'b': ['b.jpg']}, third
+
+def test_list_directory_indexes_names_without_extension_ignoring_case():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    _create_files(folder, {name: 'x' for name in ('IMG_1.CR3', 'img_1.xmp', 'IMG_1.CR3.xmp', 'IMG_2.jpg')})
+
+    index = filesystem.list_directory(folder)
+    missing = filesystem.list_directory(os.path.join(folder, 'missing'))
+
+    shutil.rmtree(temporary_folder)
+
+    assert index == {
+        'img_1': ['IMG_1.CR3', 'img_1.xmp'],
+        'img_1.cr3': ['IMG_1.CR3.xmp'],
+        'img_2': ['IMG_2.jpg'],
+    }, index
+    assert missing == {}, missing
+
+# The lookups for sidecars must not scan the whole
+#  directory for each file, that is quadratic for directories with many files.
+def test_lookups_do_not_depend_on_the_number_of_files_in_the_directory():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    _create_files(folder, {'IMG_%05d.jpg' % i: '' for i in range(2000)})
+    _create_files(folder, {'IMG_00001.xmp': 'edits'})
+    photo = os.path.join(folder, 'IMG_00001.jpg')
+    filesystem.list_directory(folder)
+
+    with mock.patch('elodie.filesystem.os.path.splitext', wraps=os.path.splitext) as splitext:
+        sidecars = filesystem.find_sidecars(photo)
+        shared = filesystem.is_sidecar_shared(sidecars[0][0], photo)
+        calls = splitext.call_count
+
+    shutil.rmtree(temporary_folder)
+
+    assert sidecars == [(os.path.join(folder, 'IMG_00001.xmp'), False)], sidecars
+    assert shared is False
+    # A few calls per lookup, not one per file in the directory
+    assert calls < 50, calls
 
 # gh-474: the photo and video of an Apple Live Photo taken east of UTC get the
 #  same name. The video stores the UTC time in QuickTime:CreateDate.
@@ -2235,3 +2274,24 @@ def test_process_file_live_photo_gets_the_same_name():
     video_name = os.path.splitext(os.path.basename(video_dest))[0]
     assert photo_name == video_name == '2019-05-26_10-33-20-img_1234', (photo_name, video_name)
 
+def test_update_directory_listing_keeps_the_index_current():
+    # Files we add or remove update the cached index, it is not read again
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    _create_files(folder, {'IMG_1.jpg': 'a', 'IMG_1.xmp': 'b'})
+    filesystem.list_directory(folder)
+
+    with mock.patch('elodie.filesystem.os.listdir', wraps=os.listdir) as listdir:
+        time.sleep(0.01)
+        filesystem._file_operation('remove', os.path.join(folder, 'IMG_1.xmp'))
+        after_remove = {k: list(v) for k, v in filesystem.list_directory(folder).items()}
+        time.sleep(0.01)
+        filesystem._file_operation('copy', os.path.join(folder, 'IMG_1.jpg'), os.path.join(folder, 'img_1.JPEG'))
+        after_copy = filesystem.list_directory(folder)
+        calls = listdir.call_count
+
+    shutil.rmtree(temporary_folder)
+
+    assert calls == 0, calls
+    assert after_remove == {'img_1': ['IMG_1.jpg']}, after_remove
+    assert after_copy == {'img_1': ['IMG_1.jpg', 'img_1.JPEG']}, after_copy

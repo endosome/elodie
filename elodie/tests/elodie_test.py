@@ -30,6 +30,7 @@ from elodie.media.text import Text
 from elodie.media.video import Video
 from elodie.plugins.plugins import Plugins
 from elodie.plugins.googlephotos.googlephotos import GooglePhotos
+from elodie.external.pyexiftool import ExifTool
 
 os.environ['TZ'] = 'GMT'
 
@@ -1560,3 +1561,28 @@ def test_cli_debug_update():
     assert "Could not find /does/not/exist\n" not in result.output, result.output
     result = runner.invoke(elodie._update, ['--location', 'foobar', '--debug', '/does/not/exist'])
     assert "Could not find /does/not/exist\n" in result.output, result.output
+
+@mock.patch.object(elodie, 'send2trash')
+def test_import_send_to_trash_reads_source_folder_once(mock_send2trash):
+    # Each trashed file changes the folder, the cached listing is updated
+    #  instead of reading it again for each file.
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    for i in range(5):
+        shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'IMG_%d.jpg' % i))
+        ExifTool().execute(b'-overwrite_original', ('-EXIF:DateTimeOriginal=2019:05:26 10:33:2%d' % i).encode(), os.path.join(folder, 'IMG_%d.jpg' % i).encode())
+    mock_send2trash.side_effect = os.remove
+    elodie.FILESYSTEM.directory_listings = {}
+
+    runner = CliRunner()
+    with mock.patch('elodie.filesystem.os.listdir', wraps=os.listdir) as listdir:
+        result = runner.invoke(elodie._import, ['--destination', folder_destination, '--trash', folder])
+        source_listings = [c for c in listdir.call_args_list if c.args and c.args[0] == folder]
+    left = os.listdir(folder)
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert left == [], left
+    assert len(source_listings) == 1, source_listings

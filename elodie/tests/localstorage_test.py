@@ -11,7 +11,6 @@ from . import helper
 from elodie.localstorage import Db
 from elodie import constants
 
-os.environ['TZ'] = 'GMT'
 
 def test_init_writes_files():
     db = Db()

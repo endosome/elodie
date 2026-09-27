@@ -19,9 +19,10 @@ from elodie import constants
 
 
 # The tests run in GMT unless they set another time zone with
-#  helper.time_zone(). Test modules set TZ as well, time.tzset() makes all
-#  time functions use it, not only some of them.
-os.environ['TZ'] = 'GMT'
+#  helper.time_zone(). ELODIE_TEST_TZ runs them in another one, i.e. to find
+#  tests which only pass in UTC. time.tzset() makes all time functions use
+#  it, not only some of them.
+os.environ['TZ'] = os.environ.get('ELODIE_TEST_TZ', 'GMT')
 if hasattr(time, 'tzset'):
     time.tzset()
 

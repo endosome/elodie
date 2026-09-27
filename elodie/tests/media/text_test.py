@@ -19,7 +19,6 @@ import helper
 from elodie.media.base import Base
 from elodie.media.text import Text
 
-os.environ['TZ'] = 'GMT'
 
 def test_text_extensions():
     text = Text()

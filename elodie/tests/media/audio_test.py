@@ -19,7 +19,6 @@ from elodie.media.media import Media
 from elodie.media.video import Video
 from elodie.media.audio import Audio
 
-os.environ['TZ'] = 'GMT'
 
 def test_audio_extensions():
     audio = Audio()
@@ -227,7 +226,7 @@ def test_get_date_taken_falls_back_to_modification_time(value):
 
     shutil.rmtree(folder)
 
-    assert date_taken == time.gmtime(1584273600), date_taken
+    assert date_taken[:6] == time.localtime(1584273600)[:6], date_taken
 
 @pytest.mark.parametrize('file_name', ['audio.mp3', 'audio.flac', 'audio.ogg', 'audio.opus'])
 def test_setters_report_files_which_cannot_be_written(file_name):

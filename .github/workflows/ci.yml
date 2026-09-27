@@ -65,6 +65,15 @@ jobs:
           ELODIE_MAPQUEST_KEY: ${{ secrets.ELODIE_MAPQUEST_KEY }}
         run: pytest elodie/tests -v --cov=elodie --cov-report=xml
 
+      - name: Run tests in another time zone
+        # Dates must not depend on the time zone of the computer, the tests
+        #  run in GMT otherwise where local time and UTC are the same
+        if: matrix.python-version == '3.12'
+        env:
+          ELODIE_MAPQUEST_KEY: ${{ secrets.ELODIE_MAPQUEST_KEY }}
+          ELODIE_TEST_TZ: America/New_York
+        run: pytest elodie/tests -q -n auto --dist loadgroup
+
       - name: Upload coverage to Coveralls
         # Requires the repository to be enabled on coveralls.io
         if: matrix.python-version == '3.10'

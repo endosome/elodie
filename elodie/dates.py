@@ -57,6 +57,27 @@ def local_time(seconds):
                         timedelta(seconds=seconds)).timetuple())
 
 
+def from_utc_timestamp(seconds):
+    """The date of a timestamp which stores a date as if it was UTC, see
+    to_utc_timestamp(). It is the same on every computer.
+
+    :param float seconds:
+    :returns: time.struct_time
+    """
+    return _struct((datetime(1970, 1, 1) +
+                    timedelta(seconds=seconds)).timetuple())
+
+
+def to_utc_timestamp(date):
+    """Store a date as a timestamp as if it was UTC, i.e. in the metadata
+    of text files. Unlike the local time it is the same on every computer.
+
+    :param time.struct_time date:
+    :returns: int
+    """
+    return calendar.timegm(date)
+
+
 def to_timestamp(date):
     """Seconds since the epoch of a date in the time zone of the computer,
     the inverse of local_time().

@@ -16,8 +16,6 @@ from elodie import geolocation
 from elodie import constants
 from elodie.localstorage import Db
 
-os.environ['TZ'] = 'GMT'
-
 
 def test_decimal_to_dms():
 

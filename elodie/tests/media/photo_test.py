@@ -18,7 +18,6 @@ import helper
 from elodie.media.media import Media
 from elodie.media.photo import Photo
 
-os.environ['TZ'] = 'GMT'
 
 def test_photo_extensions():
     photo = Photo()
@@ -136,9 +135,10 @@ def test_get_date_taken_without_exif():
     photo = Photo(source)
     date_taken = photo.get_date_taken()
 
-    date_taken_from_file = time.gmtime(min(os.path.getmtime(source), os.path.getctime(source)))
+    date_taken_from_file = time.localtime(min(os.path.getmtime(source), os.path.getctime(source)))
 
-    assert date_taken == date_taken_from_file, date_taken
+    # tm_isdst of elodie's dates is not used, see elodie.dates
+    assert date_taken[:6] == date_taken_from_file[:6], date_taken
 
 def test_get_camera_make():
     photo = Photo(helper.get_file('with-location.jpg'))

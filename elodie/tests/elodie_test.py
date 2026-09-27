@@ -32,7 +32,6 @@ from elodie.plugins.plugins import Plugins
 from elodie.plugins.googlephotos.googlephotos import GooglePhotos
 from elodie.external.pyexiftool import ExifTool
 
-os.environ['TZ'] = 'GMT'
 
 def test_import_file_text():
     temporary_folder, folder = helper.create_working_folder()
@@ -508,7 +507,7 @@ def test_import_album_from_folder_keeps_date_from_modification_time(file_name):
     shutil.rmtree(folder)
     shutil.rmtree(folder_destination)
 
-    expected_date = time.strftime('%Y-%m-%d_%H-%M-%S', time.gmtime(1584273600))
+    expected_date = time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime(1584273600))
     assert os.path.basename(dest_path).startswith(expected_date), dest_path
     assert '/Trip/' in dest_path, dest_path
 
@@ -534,7 +533,7 @@ def test_update_album_keeps_date_from_modification_time(file_name):
     shutil.rmtree(folder)
     shutil.rmtree(folder_destination)
 
-    expected_date = time.strftime('%Y-%m-%d_%H-%M-%S', time.gmtime(1584273600))
+    expected_date = time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime(1584273600))
     assert result.exit_code == 0, result.output
     assert len(updated_files) == 1, updated_files
     assert '/Test Album/' in updated_files[0], updated_files
@@ -1642,3 +1641,28 @@ def test_batch_exits_with_an_error_when_a_plugin_fails():
 
     assert failed.exit_code == 1, failed.output
     assert succeeded.exit_code == 0, succeeded.output
+
+@mock.patch.object(elodie, 'send2trash')
+def test_import_send_to_trash_with_two_photos_of_the_same_name(mock_send2trash):
+    # Photos of two cameras taken in the same second get the same name. The
+    #  second must not replace the first, else the first is lost when its
+    #  original is moved to the trash.
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    for camera in ('a', 'b'):
+        os.makedirs(os.path.join(folder, camera))
+        path = os.path.join(folder, camera, 'IMG_0001.jpg')
+        shutil.copyfile(helper.get_file('plain.jpg'), path)
+        ExifTool().execute(b'-overwrite_original', ('-XMP:Description=camera %s' % camera).encode(), path.encode())
+    mock_send2trash.side_effect = os.remove
+
+    runner = CliRunner()
+    result = runner.invoke(elodie._import, ['--destination', folder_destination, '--trash', folder])
+    library = sorted(
+        os.path.join(d, f) for d, _, files in os.walk(folder_destination) for f in files)
+    descriptions = sorted(Photo(p).get_description() for p in library)
+    left = [f for d, _, files in os.walk(folder) for f in files]
+
+    assert result.exit_code == 0, result.output
+    assert descriptions == ['camera a', 'camera b'], library
+    assert left == [], left

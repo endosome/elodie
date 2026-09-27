@@ -755,11 +755,9 @@ class Sync(object):
         filesystem = self.plugin.filesystem
         media = Base.get_class_by_file(path, self.subclasses)
         metadata = media.get_metadata()
-        destination = os.path.join(
-            self.plugin.elodie_library_path,
-            filesystem.get_folder_path(metadata),
-            filesystem.get_file_name(metadata))
-        if filesystem.is_same_file(path, destination):
+        destination = filesystem.get_destination_path(
+            path, self.plugin.elodie_library_path, metadata)
+        if destination is None or filesystem.is_same_file(path, destination):
             return path
         new_path = self.plugin.filesystem.process_file(
             path, self.plugin.elodie_library_path, media,

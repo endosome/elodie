@@ -1,5 +1,4 @@
 # Project imports
-import calendar
 import unittest.mock as mock
 import os
 import re
@@ -13,8 +12,11 @@ from tempfile import gettempdir
 sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))))
 
 from . import helper
+from elodie import constants
+from elodie import dates
 from elodie.config import load_config
 from elodie.filesystem import FileSystem
+from elodie.localstorage import Db
 from elodie.media.audio import Audio
 from elodie.media.text import Text
 from elodie.media.media import Media
@@ -23,7 +25,6 @@ from elodie.media.video import Video
 from elodie.external.pyexiftool import ExifTool
 import pytest
 
-os.environ['TZ'] = 'GMT'
 
 def test_create_directory_success():
     filesystem = FileSystem()
@@ -903,8 +904,10 @@ def test_process_file_no_exif_date_is_correct_gh_330():
     shutil.rmtree(folder)
     shutil.rmtree(os.path.dirname(os.path.dirname(destination)))
 
-    assert '/2012-03-Mar/' in destination, destination
-    assert '/2012-03-02_18-28-20' in destination, destination
+    # Named by the modification time in the time zone of the computer
+    expected = time.strftime('/%Y-%m-%b/', time.localtime(utime))
+    assert expected in destination, destination
+    assert time.strftime('/%Y-%m-%d_%H-%M-%S', time.localtime(utime)) in destination, destination
 
 def test_process_file_with_location_and_title():
     filesystem = FileSystem()
@@ -1178,7 +1181,7 @@ def test_set_utime_with_exif_date():
     initial_time = int(min(initial_stat.st_mtime, initial_stat.st_ctime))
     initial_checksum = helper.checksum(origin)
 
-    assert initial_time != calendar.timegm(metadata_initial['date_taken'])
+    assert initial_time != dates.to_timestamp(metadata_initial['date_taken'])
 
     filesystem.set_utime_from_metadata(media_initial.get_metadata(), media_initial.get_file_path())
     final_stat = os.stat(origin)
@@ -1190,7 +1193,7 @@ def test_set_utime_with_exif_date():
     shutil.rmtree(folder)
 
     assert initial_stat.st_mtime != final_stat.st_mtime
-    assert final_stat.st_mtime == calendar.timegm(metadata_final['date_taken'])
+    assert final_stat.st_mtime == dates.to_timestamp(metadata_final['date_taken'])
     assert initial_checksum == final_checksum
 
 @pytest.fixture
@@ -1272,7 +1275,7 @@ def test_set_utime_without_exif_date():
     initial_time = int(min(initial_stat.st_mtime, initial_stat.st_ctime))
     initial_checksum = helper.checksum(origin)
 
-    assert initial_time == calendar.timegm(metadata_initial['date_taken'])
+    assert initial_time == dates.to_timestamp(metadata_initial['date_taken'])
 
     filesystem.set_utime_from_metadata(media_initial.get_metadata(), media_initial.get_file_path())
     final_stat = os.stat(origin)
@@ -1284,7 +1287,7 @@ def test_set_utime_without_exif_date():
     shutil.rmtree(folder)
 
     assert initial_time == final_stat.st_mtime
-    assert final_stat.st_mtime == calendar.timegm(metadata_final['date_taken']), (final_stat.st_mtime, calendar.timegm(metadata_final['date_taken']))
+    assert final_stat.st_mtime == dates.to_timestamp(metadata_final['date_taken']), (final_stat.st_mtime, dates.to_timestamp(metadata_final['date_taken']))
     assert initial_checksum == final_checksum
 
 def test_should_exclude_with_no_exclude_arg():
@@ -1790,7 +1793,7 @@ def test_process_file_sets_destination_mtime_from_date_taken():
     shutil.rmtree(folder)
     shutil.rmtree(folder_destination)
 
-    assert destination_mtime == calendar.timegm(date_taken), destination_mtime
+    assert destination_mtime == dates.to_timestamp(date_taken), destination_mtime
 
 @pytest.mark.parametrize('file_name,media_class', [
     ('plain.jpg', Photo),
@@ -2344,3 +2347,131 @@ def test_parse_folder_name_with_empty_place_name_parts():
 
     assert filesystem.parse_mask_for_location('%city', location_parts, {'city': None, 'default': 'Nevada'}) == 'Nevada'
     assert filesystem.parse_mask_for_location('%city', location_parts, {'city': None}) == 'Unknown Location'
+
+# A different file with the same name is never replaced, i.e. photos of two
+#  cameras taken in the same second
+def _copy_with_description(folder, name, description):
+    path = os.path.join(folder, name)
+    shutil.copyfile(helper.get_file('plain.jpg'), path)
+    ExifTool().execute(b'-overwrite_original', ('-XMP:Description=%s' % description).encode(), path.encode())
+    return path
+
+def test_process_file_does_not_replace_a_different_file_with_the_same_name():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+    os.makedirs(os.path.join(folder, 'a'))
+    os.makedirs(os.path.join(folder, 'b'))
+    a = _copy_with_description(os.path.join(folder, 'a'), 'IMG_0001.jpg', 'camera A')
+    b = _copy_with_description(os.path.join(folder, 'b'), 'IMG_0001.jpg', 'camera B')
+
+    dest_a = filesystem.process_file(a, library, Photo(a))
+    dest_b = filesystem.process_file(b, library, Photo(b))
+    descriptions = [Photo(p).get_description() for p in (dest_a, dest_b)]
+    hashes = Db().hash_db
+
+    assert dest_b == os.path.splitext(dest_a)[0] + '-1.jpg', (dest_a, dest_b)
+    assert descriptions == ['camera A', 'camera B'], descriptions
+    # The hash database knows where each one is
+    assert sorted(hashes.values()) == sorted([dest_a, dest_b])
+
+def test_process_file_moved_to_a_name_which_is_taken():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+    a = _copy_with_description(folder, 'IMG_0001.jpg', 'camera A')
+    dest_a = filesystem.process_file(a, library, Photo(a))
+    b = _copy_with_description(folder, 'IMG_0001.jpg', 'camera B')
+
+    dest_b = filesystem.process_file(b, library, Photo(b), move=True, allowDuplicate=True)
+
+    assert dest_b == os.path.splitext(dest_a)[0] + '-1.jpg', (dest_a, dest_b)
+    assert Photo(dest_a).get_description() == 'camera A'
+    assert not os.path.exists(b)
+
+def test_process_file_with_the_same_file_at_its_name():
+    # i.e. imported before but the hash database was removed, it is not
+    #  copied a second time
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+    a = _copy_with_description(folder, 'IMG_0001.jpg', 'camera A')
+    expected = filesystem.get_destination_path(a, library, Photo(a).get_metadata())
+    os.makedirs(os.path.dirname(expected))
+    shutil.copyfile(a, expected)
+
+    dest = filesystem.process_file(a, library, Photo(a))
+
+    assert dest == expected, dest
+
+@pytest.mark.parametrize('title,expected', [
+    # Values from metadata are used as they are, re.sub would interpret \\1
+    ('C:\\dir\\1', 'c:-dir-1'),
+    # and a / must not make a folder
+    ('Mom/Dad', 'mom-dad'),
+    ('../../../etc/evil', '..-..-..-etc-evil'),
+])
+def test_get_file_name_with_title_from_metadata(title, expected):
+    name = FileSystem().get_file_name({
+        'date_taken': time.struct_time((2021, 7, 1, 0, 30, 0, 3, 182, 0)), 'title': title, 'base_name': 'img_1',
+        'extension': 'jpg', 'original_name': None, 'album': None})
+
+    assert name.endswith('-img_1-%s.jpg' % expected), name
+    assert '/' not in name
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-original-name-absolute' % gettempdir())
+def test_get_destination_path_stays_in_the_library(mock_get_config_file):
+    # An original name stored in a photo is data from outside, i.e. with the
+    #  name %original_name.%extension
+    with open(mock_get_config_file.return_value, 'w') as f:
+        f.write('[File]\nname=%original_name.%extension\n')
+    if hasattr(load_config, 'config'):
+        del load_config.config
+    filesystem = FileSystem()
+    metadata = {'date_taken': time.struct_time((2021, 7, 1, 0, 30, 0, 3, 182, 0)), 'latitude': None, 'longitude': None, 'album': '../../x',
+                'title': None, 'base_name': 'a', 'extension': 'jpg', 'original_name': '/etc/cron.d/evil.jpg',
+                'camera_make': None, 'camera_model': None}
+
+    path = filesystem.get_destination_path('/tmp/a.jpg', '/library', metadata)
+    del load_config.config
+
+    assert path == os.path.join('/library', '2021-07-Jul', 'x', '-etc-cron.d-evil.jpg'), path
+
+def test_get_destination_path_outside_of_the_library_is_refused():
+    # A last check if a path would still be outside of the library
+    filesystem = FileSystem()
+    with mock.patch.object(filesystem, 'get_folder_path', return_value='../outside'), \
+            mock.patch.object(filesystem, 'get_file_name', return_value='a.jpg'), \
+            mock.patch('elodie.log.error') as error:
+        path = filesystem.get_destination_path('/tmp/a.jpg', '/library', {})
+
+    assert path is None
+    assert 'is outside of /library' in error.call_args[0][0]
+
+@pytest.mark.parametrize('config,expected', [
+    # %album of a file without an album, the file is in the library itself
+    ('[Directory]\nfull_path=%album\n', ''),
+    # A path without placeholders is used as it is
+    ('[Directory]\nfull_path=Photos/All\n', os.path.join('Photos', 'All')),
+])
+def test_get_folder_path_edge_cases(tmp_path, config, expected):
+    with open('%s/config.ini' % constants.application_directory(), 'w') as f:
+        f.write(config)
+    if hasattr(load_config, 'config'):
+        del load_config.config
+
+    path = FileSystem().get_folder_path({'date_taken': time.localtime(0), 'album': None, 'latitude': None, 'longitude': None})
+    del load_config.config
+
+    assert path == expected, path
+
+def test_get_file_name_without_placeholders():
+    with open('%s/config.ini' % constants.application_directory(), 'w') as f:
+        f.write('[File]\nname=photo.jpg\n')
+    if hasattr(load_config, 'config'):
+        del load_config.config
+
+    name = FileSystem().get_file_name({'date_taken': time.localtime(0), 'title': None, 'base_name': 'a', 'extension': 'jpg', 'original_name': None})
+    del load_config.config
+
+    assert name == 'photo.jpg', name

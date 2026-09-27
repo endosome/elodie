@@ -207,6 +207,23 @@ def test_set_album():
 
     assert metadata_new['album'] == 'Test Album', metadata_new['album']
 
+def test_set_album_empty_removes_it():
+    # with-album.jpg has the album in XMP:Album which Elodie reads when
+    #  XMP-xmpDM:Album is not set. Both must be removed.
+    temporary_folder, folder = helper.create_working_folder()
+    origin = '%s/photo.jpg' % folder
+    shutil.copyfile(helper.get_file('with-album.jpg'), origin)
+    photo = Photo(origin)
+    photo.set_album('Other Album')
+
+    status = Photo(origin).set_album('')
+    album = Photo(origin).get_album()
+
+    shutil.rmtree(folder)
+
+    assert status == True, status
+    assert album is None, album
+
 def test_set_date_taken_with_missing_datetimeoriginal():
     # When datetimeoriginal (or other key) is missing we have to add it gh-74
     # https://github.com/jmathai/elodie/issues/74

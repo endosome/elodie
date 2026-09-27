@@ -53,8 +53,9 @@ def test_has_album():
 
     assert album == 'Test Album', album
 
-def test_is_valid():
-    photo = Photo(helper.get_file('plain.jpg'))
+@pytest.mark.parametrize('file_name', ['plain.jpg', 'with-location.jpg'])
+def test_is_valid(file_name):
+    photo = Photo(helper.get_file(file_name))
 
     assert photo.is_valid()
 
@@ -169,15 +170,6 @@ def test_get_title_when_exif_value_is_int():
 
     assert title == '854304532', title
 
-def test_is_valid():
-    photo = Photo(helper.get_file('with-location.jpg'))
-
-    assert photo.is_valid()
-
-def test_is_not_valid():
-    photo = Photo(helper.get_file('text.txt'))
-
-    assert not photo.is_valid()
 
 def test_is_valid_when_imghdr_fails():
     photo = Photo(helper.get_file('imghdr-error.jpg'))

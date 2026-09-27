@@ -466,6 +466,8 @@ def _generate_db(source, debug):
         
     db = Db.shared()
     db.backup_hash_db()
+    # Nothing is written until all files are read, an interrupted run keeps
+    #  the previous hash db
     db.reset_hash_db()
 
     for current_file in FILESYSTEM.get_all_files(source):

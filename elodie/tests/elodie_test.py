@@ -2511,25 +2511,73 @@ def test_imports_at_the_same_time_keep_all_files_in_the_hash_db():
     assert len(set(hash_db.values())) == 20, hash_db
 
 @pytest.mark.skipif(helper.is_windows(), reason='The lock is tested with flock')
-def test_import_waits_for_another_run():
+@pytest.mark.parametrize('command', ['import', 'update', 'generate-db'])
+def test_commands_which_change_the_databases_wait_for_another_run(command):
     from elodie.localstorage import Db
     temporary_folder, folder = helper.create_working_folder()
     temporary_folder_destination, folder_destination = helper.create_working_folder()
     shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'plain.jpg'))
     application_directory = tempfile.mkdtemp()
+    args = {
+        'import': ['import', '--destination', folder_destination, folder],
+        'update': ['update', '--album', 'Trip', os.path.join(folder, 'plain.jpg')],
+        'generate-db': ['generate-db', '--source', folder],
+    }[command]
 
     with mock.patch.dict(os.environ, {'ELODIE_APPLICATION_DIRECTORY': application_directory}):
         with Db.lock():
-            process = _run_elodie(['import', '--destination', folder_destination, folder], application_directory)
+            process = _run_elodie(args, application_directory)
             waiting = process.stderr.readline()
-            imported_while_locked = os.listdir(folder_destination)
+            hash_db = os.path.join(application_directory, 'hash.json')
+            unchanged_while_locked = (os.listdir(folder_destination) == [] and os.listdir(folder) == ['plain.jpg'] and
+                                      not (os.path.exists(hash_db) and os.path.getsize(hash_db)))
     output, _ = process.communicate(timeout=60)
     shutil.rmtree(application_directory)
 
     assert 'Waiting for another elodie' in waiting, waiting
-    assert imported_while_locked == [], imported_while_locked
+    assert unchanged_while_locked
     assert process.returncode == 0, output
     assert 'Success                        1' in output, output
+
+@pytest.mark.skipif(helper.is_windows(), reason='The lock is tested with flock')
+def test_verify_does_not_wait_for_another_run():
+    # It only reads the hash db
+    from elodie.localstorage import Db
+    application_directory = tempfile.mkdtemp()
+
+    with mock.patch.dict(os.environ, {'ELODIE_APPLICATION_DIRECTORY': application_directory}):
+        with Db.lock():
+            process = _run_elodie(['verify'], application_directory)
+            output, errors = process.communicate(timeout=60)
+    shutil.rmtree(application_directory)
+
+    assert process.returncode == 0, (output, errors)
+    assert 'Waiting' not in errors, errors
+
+def test_interrupted_generate_db_keeps_the_hash_db():
+    # It is replaced by the files of the library only when all were read
+    from elodie.localstorage import Db
+    temporary_folder, folder = helper.create_working_folder()
+    for i in range(3):
+        with open(os.path.join(folder, 'photo%d.jpg' % i), 'wb') as f:
+            f.write(open(helper.get_file('plain.jpg'), 'rb').read() + str(i).encode())
+    db = Db()
+    db.add_hash('imported', '/library/photo.jpg', True)
+    checksum = Db.checksum
+    calls = []
+
+    def interrupted(self, path, *args):
+        calls.append(path)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        return checksum(self, path, *args)
+    with mock.patch.object(Db, 'checksum', interrupted):
+        result = CliRunner().invoke(elodie._generate_db, ['--source', folder])
+    with open(db.hash_db_path) as f:
+        hash_db = json.load(f)
+
+    assert result.exit_code == 1, result.output
+    assert hash_db == {'imported': '/library/photo.jpg'}, hash_db
 
 @mock.patch('elodie.localstorage.WRITE_EVERY_CHANGES', 1000)
 @mock.patch('elodie.localstorage.WRITE_EVERY_SECONDS', 3600)

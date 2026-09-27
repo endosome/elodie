@@ -1,1 +1,25 @@
+# Only what the image needs, never local secrets (config.ini has API keys)
 .git
+.github
+.venv
+venv
+env
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.coverage
+coverage.xml
+**/config.ini
+.env
+*.env
+**/.DS_Store
+**/node_modules
+**/CLAUDE.md
+build
+dist
+docs/_build
+# Test assets are downloaded by the tests, see elodie/tests/assets.json
+elodie/tests/files/raw-*
+**/*.download
+Dockerfile
+.dockerignore

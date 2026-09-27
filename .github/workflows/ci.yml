@@ -144,3 +144,33 @@ jobs:
         if: failure()
         working-directory: elodie/tests/plugins/immich/server
         run: docker compose logs --tail 200 immich-server
+
+  docker:
+    # The image runs elodie, the dev image the tests
+    runs-on: ubuntu-latest
+    env:
+      EXIFTOOL_VERSION: "13.59"
+      EXIFTOOL_SHA256: "87d3317882fdae9cb4dcfe57a96a378d0132ffc02c731315bf128b19ddcf7aac"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the images
+        run: |
+          docker build --build-arg EXIFTOOL_VERSION --build-arg EXIFTOOL_SHA256 --target dev -t elodie-dev .
+          docker build --build-arg EXIFTOOL_VERSION --build-arg EXIFTOOL_SHA256 -t elodie .
+
+      - name: Run the tests in the dev image
+        env:
+          ELODIE_MAPQUEST_KEY: ${{ secrets.ELODIE_MAPQUEST_KEY }}
+        run: docker run --rm -e ELODIE_MAPQUEST_KEY elodie-dev pytest elodie/tests -q -n auto --dist loadgroup
+
+      - name: Import and verify a photo with the image
+        run: |
+          mkdir -p app photos/new
+          cp elodie/tests/files/plain.jpg photos/new/
+          run() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/app:/elodie" -v "$PWD/photos:/photos" elodie "$@"; }
+          run import --destination /photos/library --trash /photos/new
+          test -f "photos/library/2015-12-Dec/Unknown Location/2015-12-05_00-59-26-plain.jpg"
+          test ! -e photos/new/plain.jpg
+          test -f app/hash.json
+          run verify

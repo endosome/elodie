@@ -71,6 +71,25 @@ Before running any command that modifies your photos, you can use the `--dry-run
 
 The dry-run mode shows you detailed output of what operations would be performed, letting you verify the organization structure and catch any issues before making actual changes to your photo library.
 
+### Running in Docker
+
+Instead of installing Python and ExifTool you can run Elodie in Docker. Build the image in the repository you cloned.
+
+```
+docker build -t elodie .
+docker run --rm --user "$(id -u):$(id -g)" -e TZ=Europe/Warsaw \
+    -v ~/.elodie:/elodie -v ~/Pictures:/photos \
+    elodie import --destination /photos/library /photos/new
+```
+
+* `--user` makes the files Elodie creates belong to you instead of the user of the image.
+* `TZ` should be your time zone. The date of a file without a date in its metadata, or of a video without a GPS position, is in the time zone of the computer, which is UTC in a container.
+* `/elodie` keeps the hash and location databases and your `config.ini` (see below), mount a folder there so they are kept. The paths in the hash database are the ones in the container, mount your photos at the same path every time.
+* `--trash` moves files to a `.Trash-<user id>` folder in the mounted folder.
+* A MapQuest key can be set with `-e ELODIE_MAPQUEST_KEY=...` instead of `config.ini`.
+
+`docker build --target dev -t elodie-dev .` builds an image with the tests: `docker run --rm elodie-dev pytest elodie/tests -n auto --dist loadgroup`.
+
 Now you're ready to learn more about Elodie.
 
 <p align="center"><img src ="creative/logo@300x.png" /></p>

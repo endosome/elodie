@@ -81,3 +81,34 @@ def test_exiftool_with_non_ascii_file():
             os.remove(test_file)
         if os.path.exists(test_dir):
             os.rmdir(test_dir)
+def test_exiftool_loads_the_config_of_elodie():
+    # ExifTool only loads a config given as its first argument. Elodie's
+    #  config defines the XMP-elodie:Album tag which with-album.jpg has, it
+    #  cannot be changed without it.
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'photo.jpg')
+    shutil.copyfile(helper.get_file('with-album.jpg'), origin)
+
+    ExifTool().set_tags({'XMP-elodie:Album': ''}, origin)
+    metadata = ExifTool().get_metadata(origin)
+
+    shutil.rmtree(folder)
+
+    assert 'XMP:Album' not in metadata, metadata.get('XMP:Album')
+
+@pytest.mark.parametrize('addedargs,expected', [
+    (['-config', '"/path/to/config"'], ['-config', '/path/to/config', '-stay_open']),
+    (['-config', '/path/to/config', '-api', 'x'], ['-config', '/path/to/config', '-stay_open']),
+    ([], ['-stay_open', 'True', '-@']),
+])
+def test_exiftool_config_is_the_first_argument(addedargs, expected):
+    # A new instance, ExifTool() returns the one which is running
+    exiftool = object.__new__(ExifTool)
+    exiftool.__init__(executable_='exiftool', addedargs=addedargs)
+    with patch('elodie.external.pyexiftool.subprocess.Popen') as popen:
+        exiftool.start()
+    args = popen.call_args[0][0]
+
+    assert args[1:4] == expected, args
+    # The other arguments stay common arguments
+    assert args[-len(addedargs[2:]):] == addedargs[2:] or not addedargs[2:], args

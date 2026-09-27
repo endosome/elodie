@@ -1954,3 +1954,44 @@ def test_unexpected_error_for_one_file_does_not_stop_the_run(command):
 ])
 def test_is_in_directory(path, directory, expected):
     assert elodie.is_in_directory(path, directory) is expected
+
+@pytest.mark.skipif(helper.is_windows(), reason='SIGTERM cannot be sent to the own process on Windows')
+def test_sigterm_stops_like_ctrl_c():
+    import signal
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        elodie.stop_on_sigterm()
+        with pytest.raises(KeyboardInterrupt):
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(5)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+@pytest.mark.skipif(helper.is_windows(), reason='SIGTERM cannot be sent to a process on Windows')
+def test_sigterm_stops_an_import():
+    # i.e. docker stop: elodie is stopped at once, not killed after a timeout
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'plain.jpg'))
+    # Blocks the import after it started until SIGTERM
+    script = (
+        'import runpy, sys, time, elodie.filesystem as f\n'
+        'f.FileSystem.process_file = lambda *a, **k: (print("started", flush=True), time.sleep(60))\n'
+        'sys.argv = sys.argv[1:]\n'
+        'runpy.run_path(sys.argv[0], run_name="__main__")\n'
+    )
+    process = subprocess.Popen(
+        [sys.executable, '-c', script, elodie_path, 'import', '--destination', folder_destination, folder],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        cwd=os.path.dirname(elodie_path))
+    try:
+        assert process.stdout.readline().strip() == 'started'
+        start = time.time()
+        process.terminate()
+        output, _ = process.communicate(timeout=30)
+    finally:
+        process.kill()
+
+    assert time.time() - start < 10
+    assert process.returncode == 1, (process.returncode, output)
+    assert 'Aborted!' in output, output

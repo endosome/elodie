@@ -2,6 +2,7 @@
 
 import os
 import re
+import signal
 import sys
 import traceback
 from datetime import datetime
@@ -561,6 +562,19 @@ def _update(album, location, time, title, paths, debug, dry_run):
         sys.exit(1)
 
 
+def _terminate(signum, frame):
+    raise KeyboardInterrupt
+
+
+def stop_on_sigterm():
+    """Stop on SIGTERM like on Ctrl-C, i.e. on docker stop. Without a
+    handler it is ignored when elodie is the first process of a container
+    which is killed after a timeout then.
+    """
+    if hasattr(signal, 'SIGTERM'):
+        signal.signal(signal.SIGTERM, _terminate)
+
+
 @click.group()
 def main():
     pass
@@ -574,6 +588,7 @@ main.add_command(_batch)
 
 
 if __name__ == '__main__':
+    stop_on_sigterm()
     #Initialize ExifTool Subprocess
     exiftool_addedargs = [
        u'-config',

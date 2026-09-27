@@ -3,6 +3,8 @@
 from os import path
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -23,6 +25,10 @@ __KEY_PLACEHOLDER__ = 'your-api-key-goes-here'
 
 #: Seconds to wait for a response of MapQuest.
 __TIMEOUT__ = 30
+# A lookup is repeated after 1, 2 and 4 seconds when the connection fails or
+#  MapQuest is busy, otherwise a photo would be filed as Unknown Location.
+__RETRIES__ = 3
+__RETRY_BACKOFF__ = 1
 
 #: Parts of a place name from the most to the least specific.
 __PLACE_NAME_PARTS__ = ('city', 'town', 'state', 'country')
@@ -338,9 +344,14 @@ def lookup(**kwargs):
               )
         # log the MapQuest url gh-446
         log.info('MapQuest url: %s' % (url))
-        r = requests.get(url, headers=headers, timeout=__TIMEOUT__)
+        r = _get(url, headers)
     except requests.exceptions.RequestException as e:
         log.error('MapQuest lookup failed: %s' % e)
+        return None
+
+    if r.status_code != 200:
+        log.error('MapQuest lookup failed: HTTP %d %s' % (
+            r.status_code, r.text[:200]))
         return None
 
     try:
@@ -348,6 +359,21 @@ def lookup(**kwargs):
     except ValueError as e:
         log.error('MapQuest lookup failed: %s %s' % (e, r.text[:200]))
         return None
+
+
+def _get(url, headers):
+    retry = Retry(
+        total=__RETRIES__,
+        backoff_factor=__RETRY_BACKOFF__,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=('GET',),
+        raise_on_status=False,
+        respect_retry_after_header=True,
+    )
+    with requests.Session() as session:
+        session.mount('http://', HTTPAdapter(max_retries=retry))
+        session.mount('https://', HTTPAdapter(max_retries=retry))
+        return session.get(url, headers=headers, timeout=__TIMEOUT__)
 
 
 def parse_result(result):

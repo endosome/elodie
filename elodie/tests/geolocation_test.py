@@ -174,7 +174,8 @@ def test_lookup_with_prefer_english_names_false():
 @mock.patch('elodie.constants.debug', True)
 @mock.patch('elodie.geolocation.__KEY__', 'key')
 def test_lookup_debug_mapquest_url(capsys):
-    with mock.patch('elodie.geolocation.requests.get') as get:
+    with mock.patch('elodie.geolocation.requests.Session.get') as get:
+        get.return_value.status_code = 200
         get.return_value.json.return_value = {'info': {'statuscode': 400}}
         geolocation.lookup(location='Sunnyvale, CA')
     output = capsys.readouterr().out
@@ -273,7 +274,8 @@ NO_CITY = {'info': {'statuscode': 0}, 'results': [{'locations': [{
 
 @mock.patch('elodie.geolocation.__KEY__', 'key')
 def test_place_name_without_a_city():
-    with mock.patch('elodie.geolocation.requests.get') as get:
+    with mock.patch('elodie.geolocation.requests.Session.get') as get:
+        get.return_value.status_code = 200
         get.return_value.json.return_value = NO_CITY
         place = geolocation.place_name(38.5, -117.0)
         # Cached with a default
@@ -322,7 +324,8 @@ def test_get_prefer_english_names(value, expected):
 @mock.patch('elodie.geolocation.__KEY__', 'key')
 def test_lookup_has_a_timeout():
     # An unresponsive server must not stop an import forever
-    with mock.patch('elodie.geolocation.requests.get') as get:
+    with mock.patch('elodie.geolocation.requests.Session.get') as get:
+        get.return_value.status_code = 200
         get.return_value.json.return_value = {'info': {'statuscode': 400}}
         geolocation.lookup(location='Sunnyvale, CA')
 
@@ -330,7 +333,8 @@ def test_lookup_has_a_timeout():
 
 @mock.patch('elodie.geolocation.__KEY__', 'key')
 def test_lookup_with_an_invalid_response(capsys):
-    with mock.patch('elodie.geolocation.requests.get') as get:
+    with mock.patch('elodie.geolocation.requests.Session.get') as get:
+        get.return_value.status_code = 200
         get.return_value.json.side_effect = ValueError('Expecting value')
         get.return_value.text = '<html>Service Unavailable</html>'
         res = geolocation.lookup(location='Sunnyvale, CA')
@@ -341,8 +345,107 @@ def test_lookup_with_an_invalid_response(capsys):
 @mock.patch('elodie.geolocation.__KEY__', 'key')
 def test_lookup_when_mapquest_is_not_reachable(capsys):
     import requests
-    with mock.patch('elodie.geolocation.requests.get', side_effect=requests.ConnectionError('refused')):
+    with mock.patch('elodie.geolocation.requests.Session.get', side_effect=requests.ConnectionError('refused')):
         res = geolocation.lookup(location='Sunnyvale, CA')
 
     assert res is None
     assert 'MapQuest lookup failed: refused' in capsys.readouterr().err
+
+class _MapQuest(object):
+    """A local MapQuest which answers with the given responses one after
+    another: 'drop' closes the connection without a response, a number is
+    an HTTP status and a dict is returned as JSON."""
+    def __init__(self, *responses):
+        import http.server
+        import json
+        import threading
+        self.requests = 0
+        mapquest = self
+        responses = list(responses)
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                mapquest.requests += 1
+                response = responses.pop(0) if len(responses) > 1 else responses[0]
+                if response == 'drop':
+                    self.close_connection = True
+                    return
+                body = json.dumps(response if isinstance(response, dict) else {}).encode()
+                self.send_response(response if isinstance(response, int) else 200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+        self.url = 'http://127.0.0.1:%d' % self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def __enter__(self):
+        self.patches = [
+            mock.patch('elodie.constants.mapquest_base_url', self.url),
+            mock.patch('elodie.geolocation.__KEY__', 'key'),
+            mock.patch('elodie.geolocation.__RETRY_BACKOFF__', 0),
+        ]
+        for patcher in self.patches:
+            patcher.start()
+        return self
+
+    def __exit__(self, *args):
+        for patcher in self.patches:
+            patcher.stop()
+        self.server.shutdown()
+        self.server.server_close()
+
+SUNNYVALE = {'info': {'statuscode': 0}, 'results': [{'locations': [{
+    'adminArea5Type': 'City', 'adminArea5': 'Sunnyvale', 'adminArea3Type': 'State', 'adminArea3': 'California',
+    'adminArea1Type': 'Country', 'adminArea1': 'US', 'latLng': {'lat': 37.37, 'lng': -122.04},
+    'geocodeQuality': 'CITY'}]}]}
+
+@pytest.mark.parametrize('failures', [
+    # The server closed the connection without a response
+    ['drop'],
+    ['drop', 'drop', 'drop'],
+    # Busy
+    [429, 503],
+    [500, 502, 504],
+])
+def test_lookup_is_repeated_when_it_fails(failures):
+    with _MapQuest(*(failures + [SUNNYVALE])) as mapquest:
+        res = geolocation.lookup(location='Sunnyvale, CA')
+
+    assert res is not None and res['results'][0]['locations'][0]['latLng']['lat'] == 37.37, res
+    assert mapquest.requests == len(failures) + 1
+
+@pytest.mark.parametrize('failure,message', [
+    ('drop', 'Max retries exceeded'),
+    (503, 'HTTP 503'),
+])
+def test_lookup_gives_up_after_three_retries(capsys, failure, message):
+    with _MapQuest(failure) as mapquest:
+        res = geolocation.lookup(location='Sunnyvale, CA')
+
+    assert res is None
+    assert mapquest.requests == 4
+    err = capsys.readouterr().err
+    assert 'MapQuest lookup failed: ' in err and message in err, err
+
+@pytest.mark.parametrize('status', [400, 401, 403, 404])
+def test_lookup_is_not_repeated_for_an_invalid_request(status):
+    # i.e. an invalid key
+    with _MapQuest(status) as mapquest:
+        res = geolocation.lookup(location='Sunnyvale, CA')
+
+    assert res is None
+    assert mapquest.requests == 1
+
+def test_place_name_is_found_after_a_failed_connection():
+    # The photo was filed as Unknown Location
+    helper.reset_dbs()
+    with _MapQuest('drop', SUNNYVALE):
+        place = geolocation.place_name(37.371, -122.041)
+
+    assert place['default'] == 'Sunnyvale', place

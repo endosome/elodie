@@ -235,10 +235,20 @@ class ExifTool(object, metaclass=Singleton):
         if self.running:
             warnings.warn("ExifTool already running; doing nothing.")
             return
+        # ExifTool only loads a config file given as the first argument, so
+        #  -config is moved there from the common arguments. The path may
+        #  be quoted for a shell, the quotes are not part of it.
+        addedargs = list(self.addedargs)
+        configargs = []
+        if '-config' in addedargs:
+            index = addedargs.index('-config')
+            configargs = ['-config', addedargs[index + 1].strip('"')]
+            del addedargs[index:index + 2]
         with open(os.devnull, "w") as devnull:
-            procargs = [self.executable, "-stay_open", "True",  "-@", "-",
-                 "-common_args", "-G", "-n"];
-            procargs.extend(self.addedargs)
+            procargs = [self.executable] + configargs + [
+                "-stay_open", "True",  "-@", "-",
+                "-common_args", "-G", "-n"];
+            procargs.extend(addedargs)
             logging.debug(procargs) 
             self._process = subprocess.Popen(
                 procargs,

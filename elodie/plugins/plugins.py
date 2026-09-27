@@ -196,8 +196,11 @@ class Plugins(object):
             # If any other error occurs we log the message and proceed as usual.
             # By default, plugins don't change behavior.
             try:
-                this_method()
+                result = this_method()
                 log.info('Called batch() for {}'.format(cls))
+                # Plugins return a tuple of whether it succeeded and a count
+                if isinstance(result, tuple) and result and result[0] is False:
+                    pass_status = False
             except ElodiePluginError as err:
                 log.warn('Plugin {} raised an exception in run_batch: {}'.format(cls, err))
                 log.error(format_exc())

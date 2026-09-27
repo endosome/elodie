@@ -293,3 +293,26 @@ def test_db_set_dry_run(mock_print):
     
     # Verify dry-run message was printed
     mock_print.assert_called_once_with("[DRY-RUN][foobar_set_test] Would save to database 'dry_run_key': dry_run_value")
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-batch-returns-failure' % gettempdir())
+def test_run_batch_fails_when_a_plugin_returns_a_failure(mock_get_config_file):
+    # Plugins like GooglePhotos and Immich return (status, count) from batch()
+    with open(mock_get_config_file.return_value, 'w') as f:
+        f.write("""
+[Plugins]
+plugins=Dummy
+        """)
+    if hasattr(load_config, 'config'):
+        del load_config.config
+
+    plugins = Plugins()
+    plugins.load()
+    results = {}
+    for result in ((False, 3), (True, 3), None):
+        with mock.patch.object(plugins.classes['Dummy'], 'batch', return_value=result):
+            results[result] = plugins.run_batch()
+
+    if hasattr(load_config, 'config'):
+        del load_config.config
+
+    assert results == {(False, 3): False, (True, 3): True, None: True}, results

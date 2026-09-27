@@ -1630,3 +1630,14 @@ def test_import_send_to_trash_finds_sidecar_added_during_import(mock_send2trash)
     assert result.exit_code == 0, result.output
     assert left == [], left
     assert len(library_sidecars) == 1, library_sidecars
+
+def test_batch_exits_with_an_error_when_a_plugin_fails():
+    # i.e. for cron to notice that a sync failed
+    runner = CliRunner()
+    with mock.patch.object(elodie.Plugins, 'run_batch', return_value=False):
+        failed = runner.invoke(elodie._batch)
+    with mock.patch.object(elodie.Plugins, 'run_batch', return_value=True):
+        succeeded = runner.invoke(elodie._batch)
+
+    assert failed.exit_code == 1, failed.output
+    assert succeeded.exit_code == 0, succeeded.output

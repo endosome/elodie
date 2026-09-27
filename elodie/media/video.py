@@ -10,9 +10,8 @@ from datetime import datetime
 
 import os
 import re
-import time
 
-from elodie.compatability import _gmtime
+from elodie import dates
 from .media import Media
 
 
@@ -55,18 +54,25 @@ class Video(Media):
         self.longitude_ref_key = 'EXIF:GPSLongitudeRef'
         self.set_gps_ref = False
 
+    #: Dates which are in UTC by the QuickTime specification. Phones store
+    #:  UTC there, some cameras local time, like ExifTool and Immich they
+    #:  are treated as UTC.
+    utc_date_keys = ('QuickTime:CreateDate', 'QuickTime:MediaCreateDate')
+
     def get_date_taken(self):
         """Get the date which the video was taken.
 
         The date comes from the first key of exif_map['date_taken'] with a
         valid date, which are ordered by preference. Without one it is the
-        min() of mtime and ctime.
+        min() of mtime and ctime in the time zone of the computer.
 
-        QuickTime:CreationDate (i.e. from iPhones) is the local time where
-        the video was taken, like the date of photos. QuickTime:CreateDate is
-        often in UTC. Using the earliest of all dates picked it east of UTC
-        and gave videos a different date than the photos taken with them.
-        See gh-378 and gh-474.
+        A date with a time zone, i.e. QuickTime:CreationDate of iPhones, is
+        the local time where the video was taken and is used as it is, like
+        the dates of photos. A date in UTC is converted to the time zone
+        where it was taken, found from its GPS position, or else to the one
+        of the computer, see elodie.dates. Using the earliest of all dates
+        gave videos a different date than the photos taken with them. See
+        gh-378 and gh-474.
 
         :returns: time object or None for non-photo files or 0 timestamp
         """
@@ -76,33 +82,41 @@ class Video(Media):
         source = self.source
         seconds_since_epoch = min(os.path.getmtime(source), os.path.getctime(source))  # noqa
 
-        exif = self.get_exiftool_attributes()
+        exif = self.get_exiftool_attributes() or {}
         for date_key in self.exif_map['date_taken']:
-            if date_key in exif:
-                # Example date strings we want to parse
-                # 2015:01:19 12:45:11-08:00
-                # 2013:09:30 07:06:05
-                # The time zone is ignored, the local time is used like
-                #  for photos.
-                date_string = self.normalize_date_string(str(exif[date_key]))
-                date = re.search('([0-9: ]+)([-+][0-9:]+)?', date_string)
-                if(date is not None):
-                    try:
-                        seconds_since_epoch = time.mktime(
-                            datetime.strptime(
-                                date.group(1).strip(),
-                                '%Y:%m:%d %H:%M:%S'
-                            ).timetuple()
-                        )
-                        break
-                    except (ValueError, OverflowError):
-                        # i.e. 0000:00:00 00:00:00 when the date is not set
-                        pass
+            if date_key not in exif:
+                continue
+            # Example date strings we want to parse
+            # 2015:01:19 12:45:11-08:00
+            # 2013:09:30 07:06:05
+            # 2019:07:04 12:00:00Z
+            date_string = self.normalize_date_string(str(exif[date_key]))
+            match = re.match(
+                r'(\d{4}:\d{2}:\d{2} \d{2}:\d{2}:\d{2})(?:\.\d+)?'
+                r'\s*(Z|[-+]\d{2}:?\d{2})?',
+                date_string.strip())
+            if match is None:
+                continue
+            try:
+                date = datetime.strptime(match.group(1), '%Y:%m:%d %H:%M:%S')
+            except ValueError:
+                # i.e. 0000:00:00 00:00:00 when the date is not set
+                continue
+
+            offset = match.group(2)
+            is_utc = (offset in ('Z', '+00:00', '-00:00', '+0000') or
+                      (offset is None and date_key in self.utc_date_keys))
+            if not is_utc:
+                return dates.wall_clock(date)
+            return dates.utc_to_local(
+                date,
+                self.get_coordinate('latitude'),
+                self.get_coordinate('longitude'))
 
         if(seconds_since_epoch == 0):
             return None
 
-        return _gmtime(seconds_since_epoch)
+        return dates.local_time(seconds_since_epoch)
 
     def normalize_date_string(self, value):
         """Convert dates like 2019-07-04, 2019:07:04 or 2019-07-04T12:00:00,

@@ -7,12 +7,11 @@ image objects (JPG, DNG, etc.).
 
 import os
 import re
-import time
 from datetime import datetime
 from re import compile
 
+from elodie import dates
 from elodie import log
-from elodie.compatability import _gmtime
 from .media import Media
 
 
@@ -40,7 +39,9 @@ class Photo(Media):
     def get_date_taken(self):
         """Get the date which the photo was taken.
 
-        The date value returned is defined by the min() of mtime and ctime.
+        The date of the camera as it is stored in EXIF, which has no time
+        zone, see elodie.dates. Without one it is the min() of mtime and
+        ctime in the time zone of the computer.
 
         :returns: time object or None for non-photo files or 0 timestamp
         """
@@ -50,17 +51,10 @@ class Photo(Media):
         source = self.source
         seconds_since_epoch = min(os.path.getmtime(source), os.path.getctime(source))  # noqa
 
-        exif = self.get_exiftool_attributes()
-        if not exif:
-            return _gmtime(seconds_since_epoch)
+        exif = self.get_exiftool_attributes() or {}
 
-        # We need to parse a string from EXIF into a timestamp.
         # EXIF DateTimeOriginal and EXIF DateTime are both stored
         #   in %Y:%m:%d %H:%M:%S format
-        # we split on a space and then r':|-' -> convert to int -> .timetuple()
-        #   the conversion in the local timezone
-        # EXIF DateTime is already stored as a timestamp
-        # Sourced from https://github.com/photo/frontend/blob/master/src/libraries/models/Photo.php#L500  # noqa
         for key in self.exif_map['date_taken']:
             try:
                 if(key in exif):
@@ -69,9 +63,7 @@ class Photo(Media):
                         dt_list = compile(r'-|:').split(dt)
                         dt_list = dt_list + compile(r'-|:').split(tm)
                         dt_list = map(int, dt_list)
-                        time_tuple = datetime(*dt_list).timetuple()
-                        seconds_since_epoch = time.mktime(time_tuple)
-                        break
+                        return dates.wall_clock(datetime(*dt_list))
             except BaseException as e:
                 # i.e. 0000:00:00 00:00:00, the next key is used
                 log.info('Invalid date in %s: %s' % (key, e))
@@ -79,7 +71,7 @@ class Photo(Media):
         if(seconds_since_epoch == 0):
             return None
 
-        return _gmtime(seconds_since_epoch)
+        return dates.local_time(seconds_since_epoch)
 
     def is_valid(self):
         """Check the file extension against valid file extensions.

@@ -4,7 +4,6 @@ General file system methods.
 .. moduleauthor:: Jaisen Mathai <jaisen@jmathai.com>
 """
 
-import calendar
 import filecmp
 import os
 import re
@@ -15,6 +14,7 @@ from send2trash import send2trash
 
 from elodie import compatability
 from elodie import constants
+from elodie import dates
 from elodie import geolocation
 from elodie import log
 from elodie.config import load_config
@@ -1009,18 +1009,16 @@ class FileSystem(object):
                 '%Y-%m-%d %H:%M:%S'
             )
 
-            # The date in the file name was generated from date_taken
-            #  which is in UTC (see get_file_name) so we use timegm here too.
+            # The date in the file name is the one of date_taken, a local
+            #  date (see elodie.dates).
             if not constants.dry_run:
-                os.utime(file_path, (time.time(), calendar.timegm(date_taken)))
+                os.utime(file_path,
+                         (time.time(), dates.to_timestamp(date_taken)))
             else:
                 print(f"[DRY-RUN] Would set utime from date pattern for: {file_path}")
         else:
-            # date_taken is a UTC struct_time (see get_date_taken) so we
-            #  use timegm, the inverse of gmtime, rather than mktime which
-            #  would treat it as local time.
-            # This also avoids mktime failing for dates before 1970 on Windows.
-            date_taken_in_seconds = calendar.timegm(date_taken)
+            # date_taken is a local date, see elodie.dates
+            date_taken_in_seconds = dates.to_timestamp(date_taken)
             if not constants.dry_run:
                 os.utime(file_path, (time.time(), (date_taken_in_seconds)))
             else:

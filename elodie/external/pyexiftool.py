@@ -94,8 +94,11 @@ KW_REPLACE, KW_ADD, KW_REMOVE = range(3)
 
 # This code has been adapted from Lib/os.py in the Python source tree
 # (sha1 265e36e277f3)
-def _fscodec():
-    encoding = sys.getfilesystemencoding()
+def _fscodec(encoding=None):
+    """Create fsencode() for an encoding, the one of the file system by
+    default."""
+    if encoding is None:
+        encoding = sys.getfilesystemencoding()
     errors = "strict"
     if encoding != "mbcs":
         try:
@@ -127,7 +130,6 @@ def _fscodec():
     return fsencode
 
 fsencode = _fscodec()
-del _fscodec
 
 #string helper
 def strip_nl (s):

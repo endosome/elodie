@@ -13,42 +13,18 @@ import helper
 from elodie.external.pyexiftool import ExifTool, fsencode
 
 def test_fsencode_with_non_ascii_characters():
-    """Test that fsencode properly handles non-ASCII characters in filenames.
-    
-    This test reproduces issue #379 where Elodie crashes when encountering
-    files with non-ASCII characters in their paths on systems with limited
-    filesystem encodings (like Windows with cp1252).
-    """
-    test_filename = "/tmp/test_фото_сад/тест_файл.jpg"
-    
-    # Test 1: Should work fine with UTF-8 encoding (current behavior on macOS/Linux)
-    encoded = fsencode(test_filename)
-    assert isinstance(encoded, bytes)
-    assert len(encoded) > 0
-    
-    # Test 2: Simulate problematic encoding scenario (Windows with cp1252)
-    # This simulates the conditions that cause issue #379
-    with patch('sys.getfilesystemencoding', return_value='cp1252'):
-        with patch('codecs.lookup_error') as mock_lookup:
-            # Simulate that surrogateescape is not available (old Python versions)
-            mock_lookup.side_effect = LookupError("surrogateescape not available")
-            
-            # Re-import to pick up the mocked encoding
-            import importlib
-            from elodie.external import pyexiftool
-            importlib.reload(pyexiftool)
-            
-            # This should raise UnicodeEncodeError with the original code
-            # but should work with the fix
-            try:
-                encoded = pyexiftool.fsencode(test_filename)
-                # If we get here, the fix is working
-                assert isinstance(encoded, bytes)
-                assert len(encoded) > 0
-                print("✓ Fix is working - non-ASCII encoding successful")
-            except UnicodeEncodeError as e:
-                # This is the expected failure with the original code
-                pytest.fail(f"fsencode failed with non-ASCII characters: {e}")
+    # gh-379: on systems whose file system encoding cannot represent a name
+    #  (i.e. cp1252 on Windows) it is encoded as UTF-8 instead of failing.
+    #  This only covers the encoding, not whether ExifTool opens the file on
+    #  such a system.
+    from elodie.external import pyexiftool
+    name = "/tmp/test_фото_сад/тест_файл.jpg"
+
+    assert pyexiftool.fsencode(name) == name.encode('utf-8')
+    assert pyexiftool._fscodec('cp1252')(name) == name.encode('utf-8')
+    # Names it can represent use the encoding
+    assert pyexiftool._fscodec('cp1252')('/tmp/café.jpg') == b'/tmp/caf\xe9.jpg'
+    assert pyexiftool.fsencode(b'/tmp/bytes') == b'/tmp/bytes'
 
 def test_exiftool_with_non_ascii_file():
     """Test that ExifTool can process files with non-ASCII characters in paths.
@@ -57,8 +33,8 @@ def test_exiftool_with_non_ascii_file():
     from issue #379.
     """
     # Create a temporary file with non-ASCII characters in the path
-    test_dir = "/tmp/test_фото_сад"
-    test_file = os.path.join(test_dir, "тест_файл.jpg")
+    test_dir = os.path.join(tempfile.mkdtemp(), "фото_сад_café")
+    test_file = os.path.join(test_dir, "тест_файл_été.jpg")
     
     # Get a real test image using helper function
     source_file = helper.get_file('with-album.jpg')
@@ -71,16 +47,15 @@ def test_exiftool_with_non_ascii_file():
         
         # Use the test-session ExifTool process from conftest.py.
         result = ExifTool().execute_json(test_file)
-        assert isinstance(result, list)
-        assert len(result) > 0
-        assert "SourceFile" in result[0]
+        assert result[0]['SourceFile'] == test_file
+        # The metadata of the file was read
+        assert result[0].get('XMP:Album') == 'Test Album', result[0]
             
     finally:
         # Cleanup
         if os.path.exists(test_file):
             os.remove(test_file)
-        if os.path.exists(test_dir):
-            os.rmdir(test_dir)
+        shutil.rmtree(os.path.dirname(test_dir))
 def test_exiftool_loads_the_config_of_elodie():
     # ExifTool only loads a config given as its first argument. Elodie's
     #  config defines the XMP-elodie:Album tag which with-album.jpg has, it
@@ -110,5 +85,6 @@ def test_exiftool_config_is_the_first_argument(addedargs, expected):
     args = popen.call_args[0][0]
 
     assert args[1:4] == expected, args
-    # The other arguments stay common arguments
-    assert args[-len(addedargs[2:]):] == addedargs[2:] or not addedargs[2:], args
+    # The other arguments stay common arguments after -common_args
+    common_args = args[args.index('-common_args') + 1:]
+    assert common_args == ['-G', '-n'] + addedargs[2:], args

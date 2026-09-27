@@ -1,6 +1,8 @@
 # -*- coding: utf-8
 # Project imports
 import os
+import unittest.mock as mock
+import json
 import sys
 
 from datetime import datetime
@@ -80,9 +82,9 @@ def test_get_date_taken_from_invalid():
         os.path.getmtime(origin),
         os.path.getctime(origin)
     )
-    expected_date_taken = time.gmtime(seconds_since_epoch)
+    expected_date_taken = time.localtime(seconds_since_epoch)
 
-    assert date_taken == expected_date_taken, date_taken
+    assert date_taken[:6] == expected_date_taken[:6], date_taken
 
 def test_get_metadata_with_numeric_header():
     # See gh-98 for details
@@ -235,6 +237,7 @@ def test_set_location():
     shutil.rmtree(folder)
 
     assert helper.isclose(metadata['latitude'], 11.1111111111), metadata['latitude']
+    assert helper.isclose(metadata['longitude'], 99.9999999999), metadata['longitude']
 
 def test_set_album_without_header():
     temporary_folder, folder = helper.create_working_folder()
@@ -466,3 +469,62 @@ def test_get_metadata_from_non_string_values(metadata_line, getter, expected):
     shutil.rmtree(folder)
 
     assert value == expected, value
+
+@pytest.mark.parametrize('value', [None, 'yesterday', '2016-04-07', True])
+def test_get_date_taken_with_invalid_date_in_metadata(value):
+    # Not a timestamp, the modification time is used like without a date
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'text.txt')
+    with open(origin, 'w') as f:
+        f.write('%s\nsample text' % json.dumps({'date_taken': value}))
+    os.utime(origin, (946684800, 946684800))
+
+    date_taken = Text(origin).get_date_taken()
+
+    assert date_taken[:6] == time.localtime(946684800)[:6], date_taken
+
+@pytest.mark.parametrize('latitude,longitude', [(0, 0), (0.0, -0.5)])
+def test_get_coordinate_zero(latitude, longitude):
+    # The equator and the prime meridian are coordinates
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'text.txt')
+    with open(origin, 'w') as f:
+        f.write('%s\nsample text' % json.dumps({'latitude': latitude, 'longitude': longitude}))
+
+    text = Text(origin)
+
+    assert (text.get_coordinate('latitude'), text.get_coordinate('longitude')) == (latitude, longitude)
+
+def test_interrupted_write_keeps_the_contents():
+    # i.e. Ctrl-C while writing the metadata
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'text.txt')
+    shutil.copyfile(helper.get_file('valid.txt'), origin)
+    os.chmod(origin, 0o640)
+    with open(origin, 'rb') as f:
+        before = f.read()
+
+    real_open = open
+
+    def open_and_fail(path, mode='r', *args, **kwargs):
+        f = real_open(path, mode, *args, **kwargs)
+        if 'w' in mode:
+            f.write('{"album": "par')
+            f.flush()
+            raise KeyboardInterrupt()
+        return f
+    with mock.patch('builtins.open', side_effect=open_and_fail):
+        with pytest.raises(KeyboardInterrupt):
+            Text(origin).set_album('Trip')
+    with open(origin, 'rb') as f:
+        after = f.read()
+    files = os.listdir(folder)
+
+    # A write which is not interrupted keeps the mode of the file
+    Text(origin).set_album('Trip')
+    mode = os.stat(origin).st_mode & 0o777
+
+    assert after == before
+    assert files == ['text.txt'], files
+    assert Text(origin).get_album() == 'Trip'
+    assert mode == 0o640, oct(mode)

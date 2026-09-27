@@ -7,6 +7,7 @@ are tracked by Elodie.
 
 from json import dumps, loads
 import os
+import shutil
 
 # load modules
 from elodie import log
@@ -49,24 +50,27 @@ class Text(Base):
 
     def get_coordinate(self, type='latitude'):
         self.parse_metadata_line()
-        if not self.metadata_line:
+        if not self.metadata_line or type not in ('latitude', 'longitude'):
             return None
-        elif type in self.metadata_line:
-            if type == 'latitude':
-                return self.metadata_line['latitude'] or None
-            elif type == 'longitude':
-                return self.metadata_line['longitude'] or None
 
-        return None
+        # 0 is a coordinate, i.e. the equator
+        value = self.metadata_line.get(type)
+        if value is None or value == '':
+            return None
+        return value
 
     def get_date_taken(self):
         source = self.source
         self.parse_metadata_line()
 
-        # We return the value if found in metadata
-        if(isinstance(self.metadata_line, dict) and
-                'date_taken' in self.metadata_line):
-            return dates.local_time(self.metadata_line['date_taken'])
+        # We return the value if found in metadata, a timestamp
+        if isinstance(self.metadata_line, dict):
+            value = self.metadata_line.get('date_taken')
+            if (isinstance(value, (int, float)) and
+                    not isinstance(value, bool)):
+                return dates.local_time(value)
+            if value is not None:
+                log.info('Invalid date_taken in %s: %r' % (source, value))
 
         # If there's no date_taken in the metadata we return
         #   from the filesystem
@@ -237,11 +241,21 @@ class Text(Base):
                 f_read.readline()
             original_contents = f_read.read()
 
-        with _open(source, 'w') as f_write:
-            f_write.write("{}\n{}".format(
-                metadata_as_json,
-                original_contents)
-            )
+        # Written to another file which then replaces it, so a write which
+        #  is interrupted (i.e. Ctrl-C) does not lose the contents.
+        temporary_path = source + '.elodie-tmp'
+        try:
+            with _open(temporary_path, 'w') as f_write:
+                f_write.write("{}\n{}".format(
+                    metadata_as_json,
+                    original_contents)
+                )
+            shutil.copymode(source, temporary_path)
+            os.replace(temporary_path, source)
+        except BaseException:
+            if os.path.exists(temporary_path):
+                os.remove(temporary_path)
+            raise
 
         os.utime(source, ns=(stat_info.st_atime_ns, stat_info.st_mtime_ns))
 

@@ -3,10 +3,12 @@
 # checks the warnings of the entrypoint. Used by CI before an image is
 # published.
 #   docker/smoke-test.sh IMAGE [PLATFORM]
+# QEMU_CPU selects the CPU which QEMU emulates for another platform, i.e.
+#  cortex-a53 for ARMv8.0-A.
 set -eu
 
 image="$1"
-platform="${2:+--platform $2}"
+platform="${2:+--platform $2}${QEMU_CPU:+ -e QEMU_CPU}"
 repository="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -18,6 +20,12 @@ run() {
     docker run --rm $platform --user "$(id -u):$(id -g)" -e TZ=Europe/Warsaw \
         -v "$work/app:/elodie" -v "$work/photos:/photos" "$image" "$@"
 }
+
+if [ -n "${QEMU_CPU:-}" ]; then
+    echo "== CPU emulated by QEMU: $QEMU_CPU"
+    # shellcheck disable=SC2086
+    docker run --rm $platform --entrypoint grep "$image" -m1 'CPU part' /proc/cpuinfo
+fi
 
 echo "== The time zone of a GPS position can be found"
 # shellcheck disable=SC2086

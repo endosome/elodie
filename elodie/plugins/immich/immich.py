@@ -24,7 +24,9 @@ import requests
 
 from elodie import constants
 from elodie.filesystem import FileSystem
-from elodie.media.base import Base, get_all_subclasses
+from elodie.media.base import Base
+from elodie.media.photo import Photo
+from elodie.media.video import Video
 from elodie.plugins.plugins import PluginBase
 
 #: Oldest Immich version with the search filters this plugin uses.
@@ -35,6 +37,18 @@ FAVORITE_RATING = 5
 
 #: Multiple albums are stored in the file separated by it, i.e. "A;B".
 ALBUM_SEPARATOR = ';'
+
+#: Immich has photos and videos.
+MEDIA_CLASSES = (Photo, Video)
+
+
+def is_album_name_storable(name):
+    """Check if an album name can be stored in a file. Elodie uses it as a
+    folder name, it must not be a path, i.e. "../Trip" or "2024/Trip".
+    """
+    return (name == name.strip() and name not in ('', '.', '..') and
+            ALBUM_SEPARATOR not in name and
+            '/' not in name and '\\' not in name)
 
 
 class ImmichError(Exception):
@@ -416,7 +430,7 @@ class Sync(object):
         self.plugin = plugin
         self.client = plugin.client
         self.state = plugin.load_state()
-        self.subclasses = get_all_subclasses()
+        self.subclasses = MEDIA_CLASSES
         # Changes for Immich are collected and applied together:
         #  album name -> set of asset IDs, favorite -> set of asset IDs
         self.album_additions = {}
@@ -494,7 +508,7 @@ class Sync(object):
                         key=lambda album: album.get('createdAt', ''))
         for album in albums:
             name = album['albumName']
-            if ALBUM_SEPARATOR in name or name != name.strip():
+            if not is_album_name_storable(name):
                 self.plugin.display(
                     'Album "{}" is not synced, its name cannot be stored in '
                     'a file'.format(name))
@@ -524,12 +538,18 @@ class Sync(object):
                         'favorite': bool(asset.get('isFavorite'))}
         baseline = self.state.get(asset_id)
         media = None
+        writable = True
         if (baseline is not None and baseline.get('path') == path and
                 baseline.get('signature') == file_signature(path)):
             # The file did not change, it has the state of the last run
             file_state = {'albums': baseline['albums'],
                           'favorite': baseline['favorite']}
+            writable = baseline.get('writable', True)
         else:
+            if baseline is not None and not baseline.get('writable', True):
+                # The file never had the state of the last run, what is
+                #  missing in it was not removed.
+                baseline = None
             media = Base.get_class_by_file(path, self.subclasses)
             if not media:
                 self.log('Skipping {}, not a supported file'.format(path))
@@ -539,13 +559,20 @@ class Sync(object):
 
         merged = merge_states(baseline, file_state, immich_state)
         new_path = path
-        if merged != file_state:
+        if merged != file_state and writable:
             if media is None:
                 media = Base.get_class_by_file(path, self.subclasses)
             new_path = self.write_file_state(media, path, file_state, merged)
             if new_path is None:
                 self.counts['errors'] += 1
                 return
+            if new_path is False:
+                # i.e. ExifTool cannot change the format
+                self.plugin.display(
+                    'Albums and favorites cannot be stored in {}, they are '
+                    'kept in Immich only'.format(path))
+                writable = False
+                new_path = path
 
         if new_path != path:
             # Immich sees the moved file as a new asset, its albums and
@@ -559,6 +586,8 @@ class Sync(object):
             return
         new_state = {'path': path, 'signature': file_signature(path)}
         new_state.update(merged)
+        if not writable:
+            new_state['writable'] = False
         if merged != immich_state:
             # Saved once the changes are applied in Immich
             self.pending[asset_id] = new_state
@@ -567,20 +596,24 @@ class Sync(object):
 
     def read_file_state(self, media):
         metadata = media.get_metadata() or {}
+        # Albums which cannot be synced stay in the file as they are
+        albums = [name for name in get_album_names(metadata.get('album'))
+                  if is_album_name_storable(name)]
         return {
-            'albums': get_album_names(metadata.get('album')),
+            'albums': albums,
             'favorite': metadata.get('rating') == FAVORITE_RATING,
         }
 
     def write_file_state(self, media, path, file_state, merged):
         """Write the merged state to the file and organize it.
 
-        :returns: str path of the file afterwards or None on errors
+        :returns: str path of the file afterwards, None on errors or False
+            if the file cannot store it
         """
         albums_changed = merged['albums'] != file_state['albums']
         favorite_changed = merged['favorite'] != file_state['favorite']
-        self.counts['files_changed'] += 1
         if constants.dry_run:
+            self.counts['files_changed'] += 1
             print('[DRY-RUN][Immich] Would set albums {} and favorite {} '
                   'of {}'.format(merged['albums'], merged['favorite'], path))
             return path
@@ -588,9 +621,17 @@ class Sync(object):
         self.log('Writing albums {} and favorite {} to {}'.format(
             merged['albums'], merged['favorite'], path))
         if albums_changed:
-            media.set_album(ALBUM_SEPARATOR.join(merged['albums']))
+            kept = [name for name in get_album_names(media.get_album())
+                    if not is_album_name_storable(name)]
+            media.set_album(ALBUM_SEPARATOR.join(
+                sorted(merged['albums'] + kept)))
         if favorite_changed:
             media.set_rating(FAVORITE_RATING if merged['favorite'] else '')
+        # Elodie reports success also when ExifTool cannot write the file
+        written = Base.get_class_by_file(path, self.subclasses)
+        if not written or self.read_file_state(written) != merged:
+            return False
+        self.counts['files_changed'] += 1
         if not albums_changed:
             return path
 

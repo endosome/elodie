@@ -242,3 +242,42 @@ def test_api_url_without_api_is_reported(setup):
 
     assert result == (False, 0)
     assert 'api_url must end with /api' in display.call_args[0][0], display.call_args
+
+def test_files_which_cannot_store_albums_keep_them_in_immich(setup):
+    library, server, names = setup
+    folder = os.path.join(library, '2019-07-Jul', 'Unknown Location')
+    os.makedirs(folder)
+    path = os.path.join(folder, 'clip.webm')
+    shutil.copyfile(helper.get_file('video.webm'), path)
+    server.scan(library)
+    run_batch()
+    asset = server.assets()['clip.webm']
+    trip = server.call('POST', '/albums', json={'albumName': names('Trip')})
+    server.call('PUT', '/albums/%s/assets' % trip['id'], json={'ids': [asset['id']]})
+    server.call('PUT', '/assets', json={'ids': [asset['id']], 'isFavorite': True})
+
+    result, messages = run_batch()
+    # The file changes, i.e. it was copied back from a backup
+    os.utime(path, (0, 0))
+    run_batch()
+
+    assert any('cannot be stored in' in m for m in messages), messages
+    assert os.path.isfile(path)
+    assert server.albums_of('clip.webm') == [names('Trip')]
+    assert server.assets()['clip.webm']['isFavorite'] is True
+
+def test_album_names_which_are_paths_are_not_synced(setup):
+    library, server, names = setup
+    path = create_photo(library, 'a.jpg')
+    server.scan(library)
+    album = server.call('POST', '/albums', json={'albumName': '../%s escape' % os.path.basename(library)})
+    server.call('PUT', '/albums/%s/assets' % album['id'], json={'ids': [server.assets()['a.jpg']['id']]})
+
+    try:
+        result, messages = run_batch()
+    finally:
+        server.call('DELETE', '/albums/%s' % album['id'])
+
+    assert os.path.isfile(path)
+    assert file_state(library, 'a.jpg')[0] == []
+    assert any('is not synced, its name cannot be stored in a file' in m for m in messages), messages

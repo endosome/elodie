@@ -38,11 +38,13 @@ def warn_json(payload):
 
 
 def error(message):
-    _print_debug(message)
+    # Errors are shown in all modes, on stderr. Problems which are handled,
+    #  i.e. an invalid date which is skipped, are logged with info().
+    _print(message, file=sys.stderr)
 
 
 def error_json(payload):
-    _print_debug(dumps(payload))
+    _print(dumps(payload), file=sys.stderr)
 
 
 def _print_debug(string):
@@ -54,12 +56,14 @@ def _print_debug(string):
     if(constants.debug is True):
         _print(string)
 
-def _print(s):
+def _print(s, file=None):
+    s = str(s)
     try:
-        print(s)
+        print(s, file=file)
     except UnicodeEncodeError:
         for c in s:
             try:
-                print(c, end='')
+                print(c, end='', file=file)
             except UnicodeEncodeError:
-                print('?', end='')
+                print('?', end='', file=file)
+        print(file=file)

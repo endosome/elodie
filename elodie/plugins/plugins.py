@@ -166,9 +166,9 @@ class Plugins(object):
                 self.classes[plugin] = getattr(this_module, plugin)()
                 # We only append to self.plugins if we're able to load the class
                 self.plugins.append(plugin)
-            except:
-                log.error('An error occurred initiating plugin {}'.format(plugin))
-                log.error(format_exc())
+            except Exception as e:
+                log.error('Could not load plugin {}: {}'.format(plugin, e))
+                log.info(format_exc())
 
         self.loaded = True
 
@@ -188,12 +188,12 @@ class Plugins(object):
                 this_method(file_path, destination_folder, final_file_path, metadata)
                 log.info('Called after() for {}'.format(cls))
             except ElodiePluginError as err:
-                log.warn('Plugin {} raised an exception in run_all_before: {}'.format(cls, err))
-                log.error(format_exc())
-                log.error('false')
+                log.warn('Plugin {} raised an exception in run_all_after: {}'.format(cls, err))
+                log.info(format_exc())
                 pass_status = False
-            except:
-                log.error(format_exc())
+            except Exception as e:
+                log.error('Plugin {} failed in after(): {}'.format(cls, e))
+                log.info(format_exc())
         return pass_status
 
     def run_batch(self):
@@ -214,10 +214,11 @@ class Plugins(object):
                     pass_status = False
             except ElodiePluginError as err:
                 log.warn('Plugin {} raised an exception in run_batch: {}'.format(cls, err))
-                log.error(format_exc())
+                log.info(format_exc())
                 pass_status = False
-            except:
-                log.error(format_exc())
+            except Exception as e:
+                log.error('Plugin {} failed in batch(): {}'.format(cls, e))
+                log.info(format_exc())
         return pass_status
 
     def run_all_before(self, file_path, destination_folder):
@@ -236,9 +237,10 @@ class Plugins(object):
                 this_method(file_path, destination_folder)
                 log.info('Called before() for {}'.format(cls))
             except ElodiePluginError as err:
-                log.warn('Plugin {} raised an exception in run_all_after: {}'.format(cls, err))
-                log.error(format_exc())
+                log.warn('Plugin {} raised an exception in run_all_before: {}'.format(cls, err))
+                log.info(format_exc())
                 pass_status = False
-            except:
-                log.error(format_exc())
+            except Exception as e:
+                log.error('Plugin {} failed in before(): {}'.format(cls, e))
+                log.info(format_exc())
         return pass_status

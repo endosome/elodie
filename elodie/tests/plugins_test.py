@@ -80,8 +80,6 @@ plugins=DNE
         del load_config.config
 
     assert plugins.plugins == [], plugins.plugins
-
-    assert plugins.plugins == [], plugins.plugins
     assert len(plugins.classes) == 0, len(plugins.classes)
 
 @mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-load-plugins-many' % gettempdir())
@@ -229,6 +227,10 @@ def test_db_initialize_file():
         pass
     db = PluginDb('foobar')
 
+    with open(db.db_file) as f:
+        assert f.read() == '{}'
+    assert db.get_all() == {}
+
 def test_db_get_then_set_then_get_then_delete():
     db = PluginDb('foobar')
     foo = db.get('foo')
@@ -340,3 +342,23 @@ def test_plugin_db_is_not_corrupted_by_an_interrupted_write():
 
     assert db.get('key') == 'old value'
     assert os.listdir(os.path.dirname(db.db_file)) == ['interrupted.json']
+
+@mock.patch('elodie.config.get_config_file', return_value='%s/config.ini-load-plugins-error-shown' % gettempdir())
+def test_plugin_which_cannot_be_loaded_is_reported(mock_get_config_file, capsys):
+    # i.e. a typo in config.ini, without --debug
+    with open(mock_get_config_file.return_value, 'w') as f:
+        f.write("""
+[Plugins]
+plugins=Dummy,DoesNotExist
+        """)
+    if hasattr(load_config, 'config'):
+        del load_config.config
+
+    plugins = Plugins()
+    plugins.load()
+
+    if hasattr(load_config, 'config'):
+        del load_config.config
+
+    assert plugins.plugins == ['Dummy'], plugins.plugins
+    assert 'Could not load plugin DoesNotExist' in capsys.readouterr().err

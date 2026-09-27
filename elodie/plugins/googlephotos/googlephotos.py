@@ -94,7 +94,7 @@ class GooglePhotos(PluginBase):
         #  exception and reauthenticate.
         try:
             creds = Credentials.from_authorized_user_file(self.auth_file, self.scopes)
-        except:
+        except Exception:
             try:
                 flow = InstalledAppFlow.from_client_secrets_file(self.secrets_file, self.scopes)
                 creds = flow.run_local_server()
@@ -111,7 +111,7 @@ class GooglePhotos(PluginBase):
                 # Store the returned authentication tokens to the auth_file.
                 with open(self.auth_file, 'w') as f:
                     f.write(json.dumps(cred_dict))
-            except:
+            except Exception:
                 return
 
         self.session = AuthorizedSession(creds)

@@ -162,6 +162,10 @@ def format_error (result):
         else:
             return 'exiftool finished with error: "%s"' % strip_nl(result) 
 
+class ExifToolError(Exception):
+    """ExifTool exited while it ran a command."""
+
+
 class Singleton(type):
     """Metaclass to use the singleton [anti-]pattern"""
     instance = None
@@ -265,11 +269,28 @@ class ExifTool(object, metaclass=Singleton):
         """
         if not self.running:
             return
-        self._process.stdin.write(b"-stay_open\nFalse\n")
-        self._process.stdin.flush()
-        self._process.communicate()
+        try:
+            self._process.stdin.write(b"-stay_open\nFalse\n")
+            self._process.stdin.flush()
+        except OSError:
+            # It exited already, i.e. Ctrl+C reached it as well
+            pass
+        self._stop()
+
+    def _stop(self):
+        """Wait for the exiftool process to exit.
+
+        :returns: int its exit code
+        """
+        if not self._process.stdin.closed:
+            try:
+                self._process.communicate()
+            except OSError:
+                pass
+        returncode = self._process.wait()
         del self._process
         self.running = False
+        return returncode
 
     def __enter__(self):
         self.start()
@@ -302,13 +323,43 @@ class ExifTool(object, metaclass=Singleton):
         """
         if not self.running:
             raise ValueError("ExifTool instance not running.")
-        self._process.stdin.write(b"\n".join(params + (b"-execute\n",)))
-        self._process.stdin.flush()
+        command = b"\n".join(params + (b"-execute\n",))
+        try:
+            self._process.stdin.write(command)
+            self._process.stdin.flush()
+        except OSError:
+            # It exited since the last command (i.e. it was killed), a new
+            #  one runs the command which it did not receive
+            self._close_pipes()
+            self._stop()
+            self.start()
+            self._process.stdin.write(command)
+            self._process.stdin.flush()
         output = b""
         fd = self._process.stdout.fileno()
         while not output[-32:].strip().endswith(sentinel):
-            output += os.read(fd, block_size)
+            block = os.read(fd, block_size)
+            if not block:
+                # It exited while it ran the command (i.e. it crashed on a
+                #  file or was killed). A new one is started for the next
+                #  commands, the command is not repeated since it may have
+                #  been run partly.
+                self._close_pipes()
+                returncode = self._stop()
+                self.start()
+                raise ExifToolError(
+                    'ExifTool exited with %s while it ran: %s' % (
+                        returncode,
+                        b' '.join(params).decode('utf-8', 'replace')[:300]))
+            output += block
         return output.strip()[:-len(sentinel)]
+
+    def _close_pipes(self):
+        for pipe in (self._process.stdin, self._process.stdout):
+            try:
+                pipe.close()
+            except OSError:
+                pass
 
     def execute_json(self, *params):
         """Execute the given batch of parameters and parse the JSON output.

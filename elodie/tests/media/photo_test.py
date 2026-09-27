@@ -521,3 +521,10 @@ def test_is_valid_when_exiftool_not_running():
         valid = photo.is_valid()
 
     assert valid == False, valid
+
+def test_get_date_taken_does_not_ignore_ctrl_c():
+    # An invalid date is skipped but Ctrl+C must stop elodie
+    photo = Photo(helper.get_file('plain.jpg'))
+    with mock.patch('elodie.dates.wall_clock', side_effect=KeyboardInterrupt):
+        with pytest.raises(KeyboardInterrupt):
+            photo.get_date_taken()

@@ -24,7 +24,6 @@ from elodie.media.photo import Photo
 from elodie.media.text import Text
 from elodie.media.video import Video
 
-os.environ['TZ'] = 'GMT'
 
 def test_get_file_path():
     media = Media(helper.get_file('plain.jpg'))
@@ -375,7 +374,7 @@ def test_set_metadata_keeps_date_taken_from_modification_time(file_name, media_c
 
     assert status == True, status
     assert value == expected or helper.isclose(value, expected), value
-    assert date_taken_before == time.gmtime(1584273600), date_taken_before
+    assert date_taken_before[:6] == time.localtime(1584273600)[:6], date_taken_before
     assert date_taken_after == date_taken_before, date_taken_after
     assert mtime_after == 1584273600, mtime_after
 

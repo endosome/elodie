@@ -63,12 +63,13 @@ class Text(Base):
         source = self.source
         self.parse_metadata_line()
 
-        # We return the value if found in metadata, a timestamp
+        # We return the value if found in metadata, a timestamp of the date
+        #  as if it was UTC, so it is the same on every computer
         if isinstance(self.metadata_line, dict):
             value = self.metadata_line.get('date_taken')
             if (isinstance(value, (int, float)) and
                     not isinstance(value, bool)):
-                return dates.local_time(value)
+                return dates.from_utc_timestamp(value)
             if value is not None:
                 log.info('Invalid date_taken in %s: %r' % (source, value))
 
@@ -133,8 +134,9 @@ class Text(Base):
         if(passed_in_time is None):
             return False
 
-        # Stored as a timestamp, of the date in the time zone of the computer
-        seconds_since_epoch = dates.to_timestamp(passed_in_time.timetuple())
+        # Stored as a timestamp of the date as if it was UTC
+        seconds_since_epoch = dates.to_utc_timestamp(
+            passed_in_time.timetuple())
         if self.skip_write('set_date_taken', (passed_in_time,),
                            date_taken=dates.wall_clock(passed_in_time)):
             return True

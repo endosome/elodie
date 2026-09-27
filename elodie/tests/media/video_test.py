@@ -1,5 +1,6 @@
 # -*- coding: utf-8
 # Project imports
+import calendar
 import os
 import sys
 
@@ -18,7 +19,6 @@ from elodie.media.media import Media
 from elodie.media.video import Video
 from elodie.external.pyexiftool import ExifTool
 
-os.environ['TZ'] = 'GMT'
 
 def test_video_extensions():
     video = Video()
@@ -231,7 +231,8 @@ def test_get_date_taken_matroska(file_name):
     date_taken = video.get_date_taken()
 
     assert video.is_valid()
-    assert date_taken == helper.time_convert((2019, 7, 4, 12, 0, 0, 3, 185, 0)), date_taken
+    # 12:00 UTC (2019:07:04 12:00:00Z) in the time zone of the computer
+    assert date_taken[:6] == time.localtime(calendar.timegm((2019, 7, 4, 12, 0, 0)))[:6], date_taken
 
 def _video_with_tags(folder, *tags):
     origin = os.path.join(folder, 'video.mov')
@@ -296,7 +297,7 @@ def test_get_date_taken_without_metadata_uses_file_time():
 
     shutil.rmtree(folder)
 
-    assert date_taken == time.gmtime(946684800), date_taken
+    assert date_taken == time.localtime(946684800), date_taken
 
 @pytest.mark.parametrize('value,expected', [
     ('2019-07-04', '2019:07:04 00:00:00'),

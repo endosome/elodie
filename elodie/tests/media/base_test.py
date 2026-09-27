@@ -21,7 +21,6 @@ from elodie.media.text import Text
 from elodie.media.photo import Photo
 from elodie.media.video import Video
 
-os.environ['TZ'] = 'GMT'
 
 def test_get_all_subclasses():
     subclasses = get_all_subclasses(Base)

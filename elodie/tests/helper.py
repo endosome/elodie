@@ -261,7 +261,7 @@ def time_zone(name):
     try:
         yield
     finally:
-        os.environ['TZ'] = previous if previous is not None else 'GMT'
+        os.environ['TZ'] = previous if previous is not None else os.environ.get('ELODIE_TEST_TZ', 'GMT')
         time.tzset()
 
 

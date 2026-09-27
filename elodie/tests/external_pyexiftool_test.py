@@ -88,3 +88,64 @@ def test_exiftool_config_is_the_first_argument(addedargs, expected):
     # The other arguments stay common arguments after -common_args
     common_args = args[args.index('-common_args') + 1:]
     assert common_args == ['-G', '-n'] + addedargs[2:], args
+
+def _new_exiftool(executable):
+    # Another instance than the one of the tests (ExifTool is a singleton)
+    exiftool = ExifTool.__new__(ExifTool)
+    ExifTool.__init__(exiftool, executable_=executable)
+    exiftool.start()
+    return exiftool
+
+def _crashing_exiftool(folder):
+    # Exits without an answer the first time it is started, then it is
+    #  exiftool: i.e. it crashed on a file
+    from elodie.dependencies import get_exiftool
+    path = os.path.join(folder, 'crashing-exiftool')
+    with open(path, 'w') as f:
+        f.write('#!/bin/sh\n'
+                'if [ ! -e "%s/crashed" ]; then touch "%s/crashed"; read line; exit 7; fi\n'
+                'exec "%s" "$@"\n' % (folder, folder, get_exiftool()))
+    os.chmod(path, 0o755)
+    return path
+
+@pytest.mark.skipif(helper.is_windows(), reason='SIGINT cannot be sent to a process on Windows')
+def test_terminate_when_exiftool_exited_already():
+    # i.e. Ctrl+C reaches ExifTool before elodie stops it, it raised
+    #  BrokenPipeError
+    import signal
+    from elodie.dependencies import get_exiftool
+    exiftool = _new_exiftool(get_exiftool())
+    exiftool._process.send_signal(signal.SIGINT)
+    exiftool._process.wait()
+
+    exiftool.terminate()
+
+    assert not exiftool.running
+
+@pytest.mark.skipif(helper.is_windows(), reason='Uses a shell script as exiftool')
+def test_execute_when_exiftool_exits_during_a_command(tmp_path):
+    # It read from the closed output forever at 100% CPU
+    from elodie.external.pyexiftool import ExifToolError
+    exiftool = _new_exiftool(_crashing_exiftool(str(tmp_path)))
+    try:
+        with pytest.raises(ExifToolError, match='ExifTool exited with 7 while it ran: -ver'):
+            exiftool.execute(b'-ver')
+        # A new one runs the next commands
+        version = exiftool.execute(b'-ver')
+    finally:
+        exiftool.terminate()
+
+    assert version.strip().startswith(b'13.'), version
+
+@pytest.mark.skipif(helper.is_windows(), reason='Uses a shell script as exiftool')
+def test_execute_after_exiftool_was_killed():
+    from elodie.dependencies import get_exiftool
+    exiftool = _new_exiftool(get_exiftool())
+    exiftool._process.kill()
+    exiftool._process.wait()
+    try:
+        version = exiftool.execute(b'-ver')
+    finally:
+        exiftool.terminate()
+
+    assert version.strip().startswith(b'13.'), version

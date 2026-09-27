@@ -1995,3 +1995,40 @@ def test_sigterm_stops_an_import():
     assert time.time() - start < 10
     assert process.returncode == 1, (process.returncode, output)
     assert 'Aborted!' in output, output
+
+@pytest.mark.skipif(helper.is_windows(), reason='Ctrl+C cannot be sent to a process group on Windows')
+def test_ctrl_c_stops_an_import():
+    # A terminal sends SIGINT to elodie and ExifTool. Here ExifTool exits
+    #  before elodie stops it, which raised BrokenPipeError.
+    import signal
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'plain.jpg'))
+    script = (
+        'import runpy, signal, sys, time, elodie.filesystem as f\n'
+        'from elodie.external.pyexiftool import ExifTool\n'
+        'def interrupted(signum, frame):\n'
+        '    ExifTool()._process.wait()\n'
+        '    raise KeyboardInterrupt\n'
+        'def process_file(*a, **k):\n'
+        '    signal.signal(signal.SIGINT, interrupted)\n'
+        '    print("started", flush=True)\n'
+        '    time.sleep(60)\n'
+        'f.FileSystem.process_file = process_file\n'
+        'sys.argv = sys.argv[1:]\n'
+        'runpy.run_path(sys.argv[0], run_name="__main__")\n'
+    )
+    process = subprocess.Popen(
+        [sys.executable, '-c', script, elodie_path, 'import', '--destination', folder_destination, folder],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        cwd=os.path.dirname(elodie_path), start_new_session=True)
+    try:
+        assert process.stdout.readline().strip() == 'started'
+        os.killpg(process.pid, signal.SIGINT)
+        output, _ = process.communicate(timeout=30)
+    finally:
+        process.kill()
+
+    assert process.returncode == 1, (process.returncode, output)
+    assert 'Aborted!' in output, output
+    assert 'Traceback' not in output, output

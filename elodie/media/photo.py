@@ -64,7 +64,7 @@ class Photo(Media):
                         dt_list = dt_list + compile(r'-|:').split(tm)
                         dt_list = map(int, dt_list)
                         return dates.wall_clock(datetime(*dt_list))
-            except BaseException as e:
+            except Exception as e:
                 # i.e. 0000:00:00 00:00:00, the next key is used
                 log.info('Invalid date in %s: %s' % (key, e))
 

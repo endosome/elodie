@@ -245,17 +245,27 @@ def _generate_db(source, debug):
 @click.option('--debug', default=False, is_flag=True,
               help='Show more verbose debug output.')
 def _verify(debug):
+    """Verify that the files in the library were not changed or damaged
+    since they were imported (bit rot).
+    """
     constants.debug = debug
     result = Result()
     db = Db()
+    # A file can have more than one checksum: the one of the source it was
+    #  imported from (to find duplicates) and the one of its content after
+    #  its metadata was written.
+    checksums = {}
     for checksum, file_path in db.all():
+        checksums.setdefault(file_path, set()).add(checksum)
+
+    for file_path, file_checksums in checksums.items():
         if not os.path.isfile(file_path):
             result.append((file_path, False))
             log.progress('x')
             continue
 
         actual_checksum = db.checksum(file_path)
-        if checksum == actual_checksum:
+        if actual_checksum in file_checksums:
             result.append((file_path, True))
             log.progress()
         else:
@@ -264,6 +274,9 @@ def _verify(debug):
 
     log.progress('', True)
     result.write()
+
+    if result.error > 0:
+        sys.exit(1)
 
 
 def update_location(media, file_path, location_name):
@@ -298,6 +311,36 @@ def update_time(media, file_path, time_string):
     time = datetime.strptime(time_string, time_format)
     media.set_date_taken(time)
     return True
+
+
+def get_library_directory(media, file_path):
+    """Get the folder of the library which contains a file, the one it
+    was imported into.
+
+    The folders of the file's current metadata are removed from its path.
+    If the file is not in them (i.e. the configuration changed since the
+    import) as many folders as the folder path definition has are removed.
+
+    :returns: str
+    """
+    directory = os.path.dirname(os.path.abspath(file_path))
+    parts = directory.split(os.sep)
+    folder = FILESYSTEM.get_folder_path(media.get_metadata())
+    if not folder:
+        return directory
+
+    folders = os.path.normpath(folder).split(os.sep)
+    if (len(folders) < len(parts) and
+            [os.path.normcase(f) for f in parts[-len(folders):]] ==
+            [os.path.normcase(f) for f in folders]):
+        return os.sep.join(parts[:-len(folders)]) or os.sep
+
+    # '/path/to/file/photo.jpg' -> '/path/to/file' ->
+    #  ['path','to','file'] -> ['path','to'] -> '/path/to'
+    depth = len(FILESYSTEM.get_folder_path_definition())
+    if depth == 0 or depth >= len(parts):
+        return directory
+    return os.sep.join(parts[:-depth]) or os.sep
 
 
 @click.command('update')
@@ -339,23 +382,13 @@ def _update(album, location, time, title, paths, debug, dry_run):
                       (current_file, current_file))
             continue
 
-        current_file = os.path.expanduser(current_file)
-
-        # The destination folder structure could contain any number of levels
-        #  So we calculate that and traverse up the tree.
-        # '/path/to/file/photo.jpg' -> '/path/to/file' ->
-        #  ['path','to','file'] -> ['path','to'] -> '/path/to'
-        current_directory = os.path.dirname(current_file)
-        destination_depth = -1 * len(FILESYSTEM.get_folder_path_definition())
-        destination = os.sep.join(
-                          os.path.normpath(
-                              current_directory
-                          ).split(os.sep)[:destination_depth]
-                      )
-
         media = Media.get_class_by_file(current_file, get_all_subclasses())
         if not media:
             continue
+
+        # The library is found from the folders of the metadata before the
+        #  update.
+        destination = get_library_directory(media, current_file)
 
         updated = False
         if location:

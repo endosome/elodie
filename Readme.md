@@ -221,8 +221,17 @@ Options:
 #### Verify library against bit rot / data rot
 
 ```
-Usage: elodie.py verify
+Usage: elodie.py verify [OPTIONS]
+
+  Verify that the files in the library were not changed or damaged since
+  they were imported (bit rot).
+
+Options:
+  --debug  Show more verbose debug output.
+  --help   Show this message and exit.
 ```
+
+`verify` exits with 1 if a file is missing or changed. Files imported with an earlier version of elodie are reported as changed since only the checksum of their source was stored; `generate-db` stores the checksums of the files in the library instead, but then a source which was imported before is no longer recognized as a duplicate.
 
 ### Excluding folders and files from being imported
 

@@ -1,16 +1,16 @@
-# Immich Plugin (experimental)
+# Immich Plugin
 
-This plugin enables albums, descriptions, location and favorites to be managed through Immich's UI while ensuring:
+This plugin keeps albums and favorites in sync between your Elodie library and [Immich](https://immich.app), which shows the library as an [external library](https://docs.immich.app/guides/external-library). You can organize your photos in Immich's UI while:
 
-* All metadata is **persisted in the photo itself**
-* Elodie remains the **canonical organizer**
-* File moves do not break album or favorite state
-
-Immich is treated as both an **intent source** (albums, descriptions, location favorites) and a **materialized view target** (albums rebuilt from metadata).
+* all albums and favorites are **stored in the photos themselves**,
+* Elodie remains the **organizer of your folders**,
+* moving files does not lose their albums or favorites in Immich.
 
 ## Requirements
 
-Install the plugin's requirements.
+* Immich 3.2 or later.
+* The Elodie library added to Immich as an external library.
+* The requirements of the plugin:
 
 ```bash
 pip install -r elodie/plugins/immich/requirements.txt
@@ -18,121 +18,61 @@ pip install -r elodie/plugins/immich/requirements.txt
 
 ## Configuration
 
-Add the following section to your `config.ini` file:
+Add the following to your `config.ini` file:
 
 ```ini
 [Plugins]
 plugins=Immich
 
-[Plugin Immich]
-api_url=https://immich.mydomain.com/api
-api_key=your_immich_api_key_here
-external_library_path=/path/to/your/photo/library
+[PluginImmich]
+api_url=https://immich.example.com/api
+api_key=your_immich_api_key
+external_library_path=/path/to/your/library/in/immich
 ```
 
-### Configuration
-
-* **api_url**: The API URL of your Immich instance (e.g., https://immich.mydomain.com/api)
-* **api_key**: Your Immich API key for authentication. [Learn more](https://api.immich.app/authentication).
-* **external_library_path**: The full path to your external library. [Learn more](https://docs.immich.app/guides/external-library).
+* **api_url**: The API URL of Immich, it ends with `/api`.
+* **api_key**: An [API key](https://docs.immich.app/features/command-line-interface#obtain-the-api-key) of the Immich user who owns the external library. It needs these permissions: `album.read`, `album.create`, `albumAsset.create`, `albumAsset.delete`, `asset.read` and `asset.update`.
+* **external_library_path**: The folder of your Elodie library as Immich sees it, the import path of the external library.
+* **elodie_library_path** (optional): The folder of your Elodie library as Elodie sees it. It's only needed when it differs from `external_library_path`, i.e. when Immich runs in Docker or on another computer. For example `external_library_path=/mnt/photos` and `elodie_library_path=/home/me/photos`.
+* **timeout** (optional): Seconds to wait for a response of Immich, 30 by default.
 
 ## Usage
 
-The plugin is automatically triggered when you run:
+Run the sync whenever you like, i.e. with cron:
 
 ```bash
 ./elodie.py batch
 ```
 
-Note: use the `--debug` flag to get verbose logs for troubleshooting.
+Add `--dry-run` to see what would change without changing anything, and `--debug` for details.
 
-### First Run (Bootstrap)
+Immich only notices new and moved files when it scans the external library. Set up a scan schedule or enable watching the library for changes in Immich's settings. Files which Immich did not scan yet are synced by a later run.
 
-On the first run, the plugin will perform a **bootstrap sync** from Elodie to Immich:
+## How it works
 
-* Scans all files in your photo library
-* Reads album, description and rating metadata from photos
-* Updates Immich albums, descriptions and favorites to match
-* Marks bootstrap as completed
+Each run compares three states of every photo: the one Elodie and Immich had after the last run, the photo now and Immich now.
 
-### Subsequent Runs (Incremental Sync)
+* **Changed in Immich**: the change is written to the photo. When an album changes, Elodie moves the photo to the folder of its album, like `elodie.py update --album` does.
+* **Changed in the photo**, i.e. with `elodie.py update` or when importing: the change is applied in Immich.
+* **Changed on both sides**: the album changes of both sides are kept and Immich wins for the favorite.
+* **A photo seen for the first time**, including every photo on the first run and every moved photo: the albums and favorites of both sides are kept.
 
-After bootstrap, all runs perform **incremental sync** from Immich to Elodie:
+Immich sees a moved file as a new photo. Since its albums and favorite are stored in the photo, they are restored in Immich on the next run after Immich scanned it.
 
-* Fetches only assets updated since last sync
-* Updates photo metadata for album and favorite changes
-* Triggers Elodie file organization if metadata changed
-* Updates last sync timestamp
-
-Some updates result in Elodie renaming and moving files. This is translated by Immich as deleting a file and uploading a new one. In order to handle this gracefully, this plugin will wait until the new file is added to Immich's database and resolve the file move (i.e. adding the new file to albums the old file was in). Of course, it does all of this by using EXIF in the photo itself.
-
-## Metadata Contracts
-
-Metadata changes sync bidirectionally between your photos and Immich.
-
-1. Updating fields through Immich will write them to the photo EXIF.
-2. Updating a photo's EXIF will populate Immich.
-
-The general intent of this plugin is that most metadata changes would happen through Immich and this plugin will ensure they get synced to the photo's EXIF.
+A photo is only read again when its file changed since the last run, so runs on large libraries are fast after the first one. A long first run can be stopped, the next run continues where it stopped.
 
 ### Albums
 
-Uses existing Elodie album metadata:
-* `XMP-xmpDM:Album` (preferred)
-* `XMP:Album` (fallback)
+Albums are stored in `XMP-xmpDM:Album`, the album Elodie uses. Immich lets a photo be in several albums, they are stored separated by `;`, i.e. `Summer;Family`. That's also the name of the folder when your folders include the album.
 
-#### Multiple Albums
-
-Since Elodie translates an album to a folder, photos cannot exist in multiple albums.
-
-However, Immich is able to support a photo belonging to multiple albums. And that's a great feature.
-
-Here's how this plugin enables a single photo to be in multiple albums.
-1. The XMP album field can contain multiple albums delimited by `;`.
-2. If album is part of the folder path it will be named the `;` delimited value. For example, the album in EXIF and and name of the folder might be `Album 1;Album 2`.
-3. The EXIF will be used to restore album memberships if the file gets moved.
+Album names containing `;` can't be stored and are not synced. Immich albums with the same name are one album for the plugin, photos are added to the oldest one.
 
 ### Favorites
 
-Maps Immich favorites to XMP ratings:
-* Immich `isFavorite = true` → `XMP:Rating = 5`
-* Immich `isFavorite = false` → removes `XMP:Rating`
-
-### Description
-
-Description is stored in `XMP:Description` and maps the description field in Immich.
-
-### Location
-
-Location is stored in `XMP:GPSLatitude` and `XMP:GPSLongitude` and maps to the latitude and longitude fields in Immich.
-
-## Error Handling
-
-The plugin logs but does not crash on:
-* Missing files
-* Assets no longer managed by Elodie
-* Album conflicts
-* API failures
-
-Summary output includes:
-* Metadata updates
-* Album moves
-* Favorites set and cleared
-* Error counts
+A favorite in Immich is a rating of 5 in the photo (`XMP:Rating`). Removing the favorite removes the rating.
 
 ## Limitations
 
-* Immich asset IDs are not preserved across file moves
-* No real-time or webhook-based sync
-* Requires scheduled `./elodie.py batch` execution
-
-## API Endpoints Used
-
-The plugin uses the following Immich API endpoints:
-* `GET /albums` - Get all albums ([docs](https://api.immich.app/endpoints/albums/getAllAlbums))
-* `GET /albums/{id}` - Get album details with assets ([docs](https://api.immich.app/endpoints/albums/getAlbumInfo))
-* `POST /albums` - Create new album ([docs](https://api.immich.app/endpoints/albums/createAlbum))
-* `PUT /albums/{id}/assets` - Add assets to album ([docs](https://api.immich.app/endpoints/albums/addAssetsToAlbum))
-* `POST /search/metadata` - Search assets by metadata ([docs](https://api.immich.app/endpoints/search/searchAssets))
-* `GET /assets/{id}` - Get detailed asset information ([docs](https://api.immich.app/endpoints/assets/getAssetInfo))
-* `PUT /assets/{id}` - Update asset (favorite status, description, location) ([docs](https://api.immich.app/endpoints/assets/updateAsset))
+* Only albums and favorites are synced. Immich reads descriptions, locations and dates from the photos when it scans them.
+* When you change the album of a photo with Elodie before a run synced a change made in Immich, the change made in Immich is lost. Run `./elodie.py batch` before updating photos with Elodie.
+* Only photos and videos in the external library are synced, not the ones uploaded to Immich.

@@ -43,17 +43,13 @@ def test_create_directory_success():
 
 def test_create_directory_recursive_success():
     filesystem = FileSystem()
-    folder = os.path.join(helper.temp_dir(), helper.random_string(10), helper.random_string(10))
+    temporary_folder, parent = helper.create_working_folder()
+    folder = os.path.join(parent, helper.random_string(10), helper.random_string(10))
     status = filesystem.create_directory(folder)
-
-    # Needs to be a subdirectory
-    assert helper.temp_dir() != folder
 
     assert status == True
     assert os.path.isdir(folder) == True
     assert os.path.exists(folder) == True
-
-    shutil.rmtree(folder)
 
 @mock.patch('elodie.filesystem.os.makedirs')
 def test_create_directory_invalid_permissions(mock_makedirs):

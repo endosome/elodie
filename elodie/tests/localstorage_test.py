@@ -467,3 +467,74 @@ def test_move_hashes_does_not_look_through_all_hashes_for_each_file():
 
     assert abspath.call_count < 100, abspath.call_count
     assert db.get_hash('key5') == '/library/moved-5.jpg'
+
+def test_writes_at_the_same_time_do_not_fail():
+    # They used the same temporary file, hash.json.tmp, one could replace
+    #  the other's and fail
+    import threading
+    errors = []
+
+    def write(n):
+        db = Db()
+        db.add_hash('key%d' % n, 'value')
+        for i in range(30):
+            try:
+                db.update_hash_db()
+            except Exception as e:
+                errors.append(e)
+    threads = [threading.Thread(target=write, args=(n,)) for n in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    directory = os.path.dirname(constants.hash_db())
+    assert errors == [], errors
+    assert [f for f in os.listdir(directory) if f.endswith('.tmp')] == []
+
+def test_write_keeps_the_permissions_of_the_database():
+    import stat
+    db = Db()
+    db.add_hash('key', 'value', True)
+    os.chmod(constants.hash_db(), 0o640)
+
+    db.add_hash('other', 'value', True)
+
+    assert stat.S_IMODE(os.stat(constants.hash_db()).st_mode) == 0o640
+
+def test_flush_shared_reports_a_write_error(capsys):
+    db = Db.shared()
+    db.add_hash('key', 'value')
+    db.update_hash_db(periodically=True)
+
+    with mock.patch.object(Db, '_write', side_effect=OSError(28, 'No space left on device')):
+        written = Db.flush_shared()
+
+    assert written is False
+    assert 'Could not write the database of elodie' in capsys.readouterr().err
+    # Written the next time
+    assert Db.flush_shared() is True
+    assert _read_json(constants.hash_db()) == {'key': 'value'}
+
+def test_lock_loads_the_databases_again_and_writes_them():
+    db = Db.shared()
+    # Changed by another run
+    other = Db()
+    other.add_hash('other', 'value', True)
+
+    with Db.lock():
+        locked = Db.shared()
+        locked.add_hash('key', 'value')
+        locked.update_hash_db(periodically=True)
+
+    assert locked is not db
+    assert _read_json(constants.hash_db()) == {'other': 'value', 'key': 'value'}
+
+def test_lock_is_released_after_an_error():
+    from elodie.localstorage import _try_lock
+    with pytest.raises(KeyboardInterrupt):
+        with Db.lock():
+            raise KeyboardInterrupt
+
+    with open(os.path.join(constants.application_directory(), 'elodie.lock'), 'a') as lock_file:
+        assert _try_lock(lock_file)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import os
+import functools
 import re
 import signal
 import sys
@@ -35,6 +36,18 @@ from elodie.external.pyexiftool import ExifTool
 from elodie.dependencies import get_exiftool
 
 FILESYSTEM = FileSystem()
+
+
+def with_database_lock(command):
+    """Run a command which changes the databases while no other run does,
+    see Db.lock().
+    """
+    @functools.wraps(command)
+    def locked(*args, **kwargs):
+        with Db.lock():
+            return command(*args, **kwargs)
+    return locked
+
 
 TIME_FORMATS = ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d')
 
@@ -356,6 +369,7 @@ def _batch(debug, dry_run):
 @click.option('--exclude-regex', default=set(), multiple=True,
               help='Regular expression for directories or files to exclude.')
 @click.argument('paths', nargs=-1, type=click.Path())
+@with_database_lock
 def _import(destination, source, file, album_from_folder, trash, allow_duplicates, location, time, debug, dry_run, exclude_regex, paths):
     """Import files or directories by reading their EXIF and organizing them accordingly.
     """
@@ -425,7 +439,8 @@ def _import(destination, source, file, album_from_folder, trash, allow_duplicate
         has_errors = report_live_photo_videos(result) or has_errors
 
     # The databases are written periodically, the rest before the summary
-    Db.flush_shared()
+    if not Db.flush_shared():
+        has_errors = True
     result.write()
 
     if has_errors:
@@ -437,6 +452,7 @@ def _import(destination, source, file, album_from_folder, trash, allow_duplicate
               required=True, help='Source of your photo library.')
 @click.option('--debug', default=False, is_flag=True,
               help='Show more verbose debug output.')
+@with_database_lock
 def _generate_db(source, debug):
     """Regenerate the hash.json database which contains all of the sha256 signatures of media files. The hash.json file is located at ~/.elodie/.
     """
@@ -726,6 +742,7 @@ def report_live_photo_videos(result):
               help='Show what would be done without making any changes.')
 @click.argument('paths', nargs=-1,
                 required=True)
+@with_database_lock
 def _update(album, location, time, title, paths, debug, dry_run):
     """Update a file's EXIF. Automatically modifies the file's location and file name accordingly.
     """
@@ -765,7 +782,8 @@ def _update(album, location, time, title, paths, debug, dry_run):
         has_errors = report_live_photo_videos(result) or has_errors
 
     # The databases are written periodically, the rest before the summary
-    Db.flush_shared()
+    if not Db.flush_shared():
+        has_errors = True
     result.write()
 
     if has_errors:

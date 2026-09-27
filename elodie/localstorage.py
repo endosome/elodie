@@ -3,10 +3,13 @@ Methods for interacting with information Elodie caches about stored media.
 """
 
 import atexit
+import contextlib
 import hashlib
 import json
 import os
+import stat
 import sys
+import tempfile
 import time
 
 from math import radians, cos, sqrt
@@ -22,6 +25,20 @@ from elodie import log
 #:  with hundreds of thousands of files in the library.
 WRITE_EVERY_CHANGES = 100
 WRITE_EVERY_SECONDS = 10
+
+
+def _try_lock(lock_file):
+    try:
+        if sys.platform == 'win32':
+            import msvcrt
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
 
 
 class Db(object):
@@ -85,9 +102,49 @@ class Db(object):
 
     @classmethod
     def flush_shared(cls):
-        """Write the changes of the shared Db to disk."""
-        if cls._shared is not None:
+        """Write the changes of the shared Db to disk.
+
+        :returns: bool whether they were written
+        """
+        if cls._shared is None:
+            return True
+        try:
             cls._shared.flush()
+            return True
+        except OSError as e:
+            log.error('Could not write the database of elodie: %s' % e)
+            return False
+
+    @classmethod
+    @contextlib.contextmanager
+    def lock(cls):
+        """Lock the databases for a run which changes them, i.e. an import.
+        The shared Db of a run holds them in memory and writes them
+        periodically, a run at the same time would overwrite its changes.
+        Another run waits until the lock is released.
+
+        The databases are loaded after the lock is taken and written before
+        it is released.
+        """
+        directory = constants.application_directory()
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        lock_file = open(os.path.join(directory, 'elodie.lock'), 'a')
+        try:
+            if not _try_lock(lock_file):
+                print('Waiting for another elodie which uses %s to finish...'
+                      % directory, file=sys.stderr, flush=True)
+                while not _try_lock(lock_file):
+                    time.sleep(1)
+            # Another run may have changed them
+            cls.reset_shared()
+            try:
+                yield
+            finally:
+                cls.flush_shared()
+        finally:
+            # Closing it releases the lock
+            lock_file.close()
 
     @classmethod
     def reset_shared(cls):
@@ -131,13 +188,24 @@ class Db(object):
             survives a power failure. That takes seconds for a large
             database, the periodic writes of a run skip it.
         """
-        temporary_path = path + '.tmp'
+        # Its own name, a write at the same time does not replace it
+        handle, temporary_path = tempfile.mkstemp(
+            dir=os.path.dirname(path), prefix=os.path.basename(path) + '.',
+            suffix='.tmp')
         try:
-            with open(temporary_path, 'w') as f:
+            with os.fdopen(handle, 'w') as f:
                 json.dump(data, f)
                 if durable:
                     f.flush()
                     os.fsync(f.fileno())
+            # The permissions of the database, not the ones of mkstemp
+            if os.path.exists(path):
+                mode = stat.S_IMODE(os.stat(path).st_mode)
+            else:
+                umask = os.umask(0)
+                os.umask(umask)
+                mode = 0o666 & ~umask
+            os.chmod(temporary_path, mode)
             os.replace(temporary_path, path)
         except BaseException:
             if os.path.exists(temporary_path):

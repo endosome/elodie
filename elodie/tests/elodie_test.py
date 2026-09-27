@@ -2480,3 +2480,69 @@ def test_ctrl_c_keeps_the_files_imported_before_in_the_hash_db():
     assert process.returncode == 1, output
     # a.jpg and b.jpg, with the checksums of the sources and of the copies
     assert len(set(hash_db.values())) == 2, hash_db
+
+def _run_elodie(args, application_directory, **kwargs):
+    return subprocess.Popen(
+        [sys.executable, elodie_path] + args, cwd=os.path.dirname(elodie_path),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=dict(os.environ, ELODIE_APPLICATION_DIRECTORY=application_directory), **kwargs)
+
+def test_imports_at_the_same_time_keep_all_files_in_the_hash_db():
+    # Each run holds the hash db in memory and writes it periodically, the
+    #  last one replaced the files of the other
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    application_directory = tempfile.mkdtemp()
+    photo = open(helper.get_file('plain.jpg'), 'rb').read()
+    for source in ('a', 'b'):
+        os.makedirs(os.path.join(folder, source))
+        for i in range(10):
+            with open(os.path.join(folder, source, '%s%d.jpg' % (source, i)), 'wb') as f:
+                f.write(photo + ('%s%d' % (source, i)).encode())
+
+    processes = [_run_elodie(['import', '--destination', folder_destination, os.path.join(folder, source)],
+                             application_directory) for source in ('a', 'b')]
+    outputs = [p.communicate(timeout=120) for p in processes]
+    with open(os.path.join(application_directory, 'hash.json')) as f:
+        hash_db = json.load(f)
+    shutil.rmtree(application_directory)
+
+    assert [p.returncode for p in processes] == [0, 0], outputs
+    assert len(set(hash_db.values())) == 20, hash_db
+
+@pytest.mark.skipif(helper.is_windows(), reason='The lock is tested with flock')
+def test_import_waits_for_another_run():
+    from elodie.localstorage import Db
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'plain.jpg'))
+    application_directory = tempfile.mkdtemp()
+
+    with mock.patch.dict(os.environ, {'ELODIE_APPLICATION_DIRECTORY': application_directory}):
+        with Db.lock():
+            process = _run_elodie(['import', '--destination', folder_destination, folder], application_directory)
+            waiting = process.stderr.readline()
+            imported_while_locked = os.listdir(folder_destination)
+    output, _ = process.communicate(timeout=60)
+    shutil.rmtree(application_directory)
+
+    assert 'Waiting for another elodie' in waiting, waiting
+    assert imported_while_locked == [], imported_while_locked
+    assert process.returncode == 0, output
+    assert 'Success                        1' in output, output
+
+@mock.patch('elodie.localstorage.WRITE_EVERY_CHANGES', 1000)
+@mock.patch('elodie.localstorage.WRITE_EVERY_SECONDS', 3600)
+def test_import_reports_when_the_hash_db_cannot_be_written():
+    from elodie.localstorage import Db
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'plain.jpg'))
+
+    with mock.patch.object(Db, '_write', side_effect=OSError(28, 'No space left on device')):
+        result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, folder])
+
+    assert result.exit_code == 1, result.output
+    assert not isinstance(result.exception, OSError), result.exception
+    assert 'Could not write the database of elodie' in result.output, result.output
+    assert 'Success                        1' in result.output, result.output

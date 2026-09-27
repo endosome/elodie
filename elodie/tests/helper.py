@@ -29,12 +29,18 @@ def checksum(file_path, blocksize=65536):
         return hasher.hexdigest()
     return None
 
+
+#: Folders created by create_working_folder(), conftest.py removes them after
+#:  each test.
+working_folders = []
+
 def create_working_folder(format=None):
     # Each test gets its own temporary_folder since many import into it and
     #  remove what they created. This allows running tests in parallel.
     temporary_folder = os.path.join(tempfile.gettempdir(), random_string(10, format))
     folder = os.path.join(temporary_folder, random_string(10, format))
     os.makedirs(folder)
+    working_folders.append(temporary_folder)
 
     return (temporary_folder, folder)
 
@@ -115,6 +121,7 @@ def get_test_location():
 def populate_folder(number_of_files, include_invalid=False):
     folder = '%s/%s' % (tempfile.gettempdir(), random_string(10))
     os.makedirs(folder)
+    working_folders.append(folder)
 
     for x in range(0, number_of_files):
         ext = 'jpg' if x % 2 == 0 else 'txt'

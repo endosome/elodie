@@ -98,3 +98,11 @@ def setup_test_environment():
         shutil.rmtree(temporary_application_directory)
     except OSError:
         pass  # Directory might already be cleaned up
+
+    # The folders of helper.create_working_folder(), many tests only remove
+    #  the folder inside it. The helper is loaded as helper and as
+    #  elodie.tests.helper, each with its own list.
+    for name in ('helper', 'elodie.tests.helper'):
+        module = sys.modules.get(name)
+        while module is not None and module.working_folders:
+            shutil.rmtree(module.working_folders.pop(), ignore_errors=True)

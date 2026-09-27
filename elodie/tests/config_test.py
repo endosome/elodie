@@ -131,3 +131,20 @@ plugins=GooglePhotos,Dummy
         del load_config.config
 
     assert plugins == ['GooglePhotos','Dummy'], plugins
+
+@patch('elodie.config.get_config_file', return_value='%s/config.ini-load-plugin-config-spaces' % gettempdir())
+def test_load_plugin_config_with_spaces_and_empty_entries(mock_get_config_file):
+    with open(mock_get_config_file.return_value, 'w') as f:
+        f.write("""
+[Plugins]
+plugins=GooglePhotos, Dummy ,,
+        """)
+    if hasattr(load_config, 'config'):
+        del load_config.config
+
+    plugins = load_plugin_config()
+
+    if hasattr(load_config, 'config'):
+        del load_config.config
+
+    assert plugins == ['GooglePhotos', 'Dummy'], plugins

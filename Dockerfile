@@ -10,10 +10,12 @@
 #   docker run --rm elodie-dev pytest elodie/tests -n auto --dist loadgroup
 # See "Running in Docker" in the Readme.
 
-ARG PYTHON_VERSION=3.12
+# Python 3.12 on Debian 13 (trixie). The digest makes the build reproducible,
+#  Dependabot updates it (see .github/dependabot.yml).
+FROM python:3.12-slim-trixie@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f AS python-base
 
 # ExifTool without its documentation and tests
-FROM python:${PYTHON_VERSION}-slim AS exiftool
+FROM python-base AS exiftool
 ARG EXIFTOOL_VERSION=13.59
 ARG EXIFTOOL_SHA256=87d3317882fdae9cb4dcfe57a96a378d0132ffc02c731315bf128b19ddcf7aac
 ADD --checksum=sha256:${EXIFTOOL_SHA256} \
@@ -24,7 +26,7 @@ RUN mkdir /opt/exiftool && \
         exiftool-${EXIFTOOL_VERSION}/exiftool exiftool-${EXIFTOOL_VERSION}/lib
 
 
-FROM python:${PYTHON_VERSION}-slim AS base
+FROM python-base AS base
 
 ENV LANG=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \

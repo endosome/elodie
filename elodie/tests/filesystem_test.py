@@ -2373,7 +2373,7 @@ def test_process_file_does_not_replace_a_different_file_with_the_same_name():
     assert dest_b == os.path.splitext(dest_a)[0] + '-1.jpg', (dest_a, dest_b)
     assert descriptions == ['camera A', 'camera B'], descriptions
     # The hash database knows where each one is
-    assert sorted(hashes.values()) == sorted([dest_a, dest_b])
+    assert set(hashes.values()) == {dest_a, dest_b}, hashes
 
 def test_process_file_moved_to_a_name_which_is_taken():
     filesystem = FileSystem()

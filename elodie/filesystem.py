@@ -770,7 +770,10 @@ class FileSystem(object):
 
         # If source and destination are identical then
         #  we should not write the file. gh-210
-        if self.is_same_file(_file, dest_path):
+        # An updated file whose name and folder do not change stays where
+        #  it is.
+        same_path = self.is_same_file(_file, dest_path)
+        if same_path and move is not True:
             print('Final source and destination path should not be identical')
             return
 
@@ -782,17 +785,18 @@ class FileSystem(object):
             if not constants.dry_run:
                 media.set_original_name()
 
-            stat = os.stat(_file)
-            # Move the processed file into the destination directory
-            self._file_operation('move', _file, dest_path)
+            if not same_path:
+                stat = os.stat(_file)
+                # Move the processed file into the destination directory
+                self._file_operation('move', _file, dest_path)
 
-            if not constants.dry_run:
-                os.utime(dest_path, (stat.st_atime, stat.st_mtime))
-            else:
-                print(f"[DRY-RUN] Would set utime for: {dest_path}")
+                if not constants.dry_run:
+                    os.utime(dest_path, (stat.st_atime, stat.st_mtime))
+                else:
+                    print(f"[DRY-RUN] Would set utime for: {dest_path}")
 
-            self.imported_sidecars = self.process_sidecars(
-                _file, dest_path, move=True)
+                self.imported_sidecars = self.process_sidecars(
+                    _file, dest_path, move=True)
         else:
             # Copy the source as is so it is not modified in any way,
             #  not even its ctime. gh-533
@@ -810,7 +814,17 @@ class FileSystem(object):
                 _file, dest_path, move=False)
 
         db = Db()
+        if move is True:
+            # The checksums of the file, i.e. of the source it was imported
+            #  from to find duplicates, belong to its new path.
+            db.move_hashes(_file, dest_path)
         db.add_hash(checksum, dest_path)
+        if not constants.dry_run:
+            # The metadata written to the file changed its content, its
+            #  checksum is used to verify it.
+            content_checksum = db.checksum(dest_path)
+            if content_checksum != checksum:
+                db.add_hash(content_checksum, dest_path)
         db.update_hash_db()
 
         # Run `after()` for every loaded plugin and if any of them raise an exception

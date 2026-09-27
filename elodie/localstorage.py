@@ -88,6 +88,17 @@ class Db(object):
         if(write is True):
             self.update_hash_db()
 
+    def move_hashes(self, old_path, new_path):
+        """Change the path of all hashes of a file which was moved.
+
+        :param str old_path:
+        :param str new_path:
+        """
+        old_path = os.path.abspath(old_path)
+        for key, value in self.hash_db.items():
+            if os.path.abspath(value) == old_path:
+                self.hash_db[key] = new_path
+
     # Location database
     # Currently quite simple just a list of long/lat pairs with a name
     # If it gets many entries a lookup might take too long and a better

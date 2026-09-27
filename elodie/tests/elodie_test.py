@@ -1504,6 +1504,7 @@ def test_verify_error():
 
     assert origin in result.output, result.output
     assert 'Error                          1' in result.output, result.output
+    assert result.exit_code == 1, result.exit_code
 
 @pytest.mark.skip(reason="Google Photos tests are disabled: they upload to a real account with shared credentials and fail when Google's quota for concurrent writes is exceeded (HTTP 429)")
 @pytest.mark.xdist_group('googlephotos')
@@ -1666,3 +1667,100 @@ def test_import_send_to_trash_with_two_photos_of_the_same_name(mock_send2trash):
     assert result.exit_code == 0, result.output
     assert descriptions == ['camera a', 'camera b'], library
     assert left == [], left
+
+def _library_files(folder):
+    return sorted(
+        os.path.relpath(os.path.join(dirname, filename), folder)
+        for dirname, dirnames, filenames in os.walk(folder)
+        for filename in filenames
+    )
+
+class _Config(object):
+    """Use a config.ini with this content."""
+    def __init__(self, name, content):
+        self.path = os.path.join(gettempdir(), 'config.ini-%s' % name)
+        self.content = content
+
+    def __enter__(self):
+        with open(self.path, 'w') as f:
+            f.write(self.content)
+        self.patch = mock.patch('elodie.config.get_config_file', return_value=self.path)
+        self.patch.start()
+        self._reset()
+
+    def __exit__(self, *args):
+        self.patch.stop()
+        self._reset()
+        os.remove(self.path)
+
+    def _reset(self):
+        if hasattr(load_config, 'config'):
+            del load_config.config
+        elodie.FILESYSTEM.cached_folder_path_definition = None
+
+def test_update_keeps_file_in_library_when_a_folder_of_its_path_is_empty():
+    # %album of a photo without an album is no folder, the photo is one
+    #  folder deep instead of two. It was moved out of the library.
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+    origin = os.path.join(folder, 'plain.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    with _Config('update-empty-folder', '[Directory]\ndate=%Y\nfull_path=%date/%album\n'):
+        dest_path = elodie.import_file(origin, library, False, False, False)
+        result = CliRunner().invoke(elodie._update, ['--title', 'first', dest_path])
+        second = CliRunner().invoke(elodie._update, ['--album', 'Trip', os.path.join(library, '2015', '2015-12-05_00-59-26-plain-first.jpg')])
+
+    files = _library_files(temporary_folder)
+
+    assert os.path.relpath(dest_path, library) == os.path.join('2015', '2015-12-05_00-59-26-plain.jpg'), dest_path
+    assert result.exit_code == 0, result.output
+    assert second.exit_code == 0, second.output
+    assert files == sorted([os.path.join('library', '2015', 'Trip', '2015-12-05_00-59-26-plain-first.jpg'),
+                            os.path.join(os.path.basename(folder), 'plain.jpg')]), files
+
+def test_update_which_does_not_change_the_path_of_the_file():
+    temporary_folder, folder = helper.create_working_folder()
+    library = os.path.join(temporary_folder, 'library')
+    origin = os.path.join(folder, 'plain.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    with _Config('update-same-path', '[Directory]\ndate=%Y\nfull_path=%date\n'):
+        dest_path = elodie.import_file(origin, library, False, False, False)
+        result = CliRunner().invoke(elodie._update, ['--album', 'Trip', dest_path])
+    verify = CliRunner().invoke(elodie._verify)
+
+    files = _library_files(library)
+    album = Photo(dest_path).get_album()
+
+    assert result.exit_code == 0, result.output
+    assert 'Success                        1' in result.output, result.output
+    assert files == [os.path.relpath(dest_path, library)], files
+    assert album == 'Trip', album
+    # The hash database has the checksum of the changed file
+    assert verify.exit_code == 0, verify.output
+
+def test_verify_files_after_import_and_update():
+    # The metadata written to the copy changes its checksum
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    origin = os.path.join(folder, 'plain.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+
+    runner = CliRunner()
+    runner.invoke(elodie._import, ['--destination', folder_destination, '--time', '2019-07-04', folder])
+    verify_import = runner.invoke(elodie._verify)
+    dest_path = os.path.join(folder_destination, _library_files(folder_destination)[0])
+    runner.invoke(elodie._update, ['--title', 'new title', dest_path])
+    verify_update = runner.invoke(elodie._verify)
+    # The source is still known after the update
+    import_again = runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    files = _library_files(folder_destination)
+
+    assert verify_import.exit_code == 0, verify_import.output
+    assert 'Success                        1' in verify_import.output, verify_import.output
+    assert verify_update.exit_code == 0, verify_update.output
+    assert 'Success                        1' in verify_update.output, verify_update.output
+    assert 'Error                          0' in verify_update.output, verify_update.output
+    assert 'Duplicate, not imported        1' in import_again.output, import_again.output
+    assert len(files) == 1 and 'new-title' in files[0], files

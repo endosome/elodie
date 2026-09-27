@@ -69,20 +69,27 @@ class FileSystem(object):
                 print(f"[DRY-RUN] Would {operation_type}: {src}")
             return True  # Simulate success
         
-        # Perform actual operation
+        # Perform actual operation. The cached listings of the directories
+        #  are updated if nothing else changed them in the meantime.
+        src_modified = self.get_directory_modified(src)
         if operation_type == 'move':
+            dst_modified = self.get_directory_modified(dst)
             shutil.move(src, dst)
-            self.update_directory_listing(src, exists=False)
-            self.update_directory_listing(dst, exists=True)
+            self.update_directory_listing(src, False, src_modified)
+            if os.path.dirname(src) == os.path.dirname(dst):
+                # Renamed, the listing was updated for the removal
+                dst_modified = self.get_directory_modified(dst)
+            self.update_directory_listing(dst, True, dst_modified)
         elif operation_type == 'copy':
+            dst_modified = self.get_directory_modified(dst)
             compatability._copyfile(src, dst)
-            self.update_directory_listing(dst, exists=True)
+            self.update_directory_listing(dst, True, dst_modified)
         elif operation_type == 'remove':
             os.remove(src)
-            self.update_directory_listing(src, exists=False)
+            self.update_directory_listing(src, False, src_modified)
         elif operation_type == 'send2trash':
             send2trash(src)
-            self.update_directory_listing(src, exists=False)
+            self.update_directory_listing(src, False, src_modified)
         return True
 
     def create_directory(self, directory_path):
@@ -792,14 +799,33 @@ class FileSystem(object):
             self.directory_listings[directory] = cached
         return cached[1]
 
-    def update_directory_listing(self, path, exists):
+    def get_directory_modified(self, path):
+        """Get the modification time of the directory of a file, to pass to
+        update_directory_listing() after changing the file.
+
+        :param str path: Path of the file.
+        :returns: int in nanoseconds or None
+        """
+        try:
+            return os.stat(os.path.dirname(path)).st_mtime_ns
+        except OSError:
+            return None
+
+    def update_directory_listing(self, path, exists, modified_before):
         """Update the cached listing of the directory of a file which was
         added or removed by us, so it does not have to be read again for the
         next file, i.e. when each file is moved to the trash after its
         import.
 
+        The listing is only updated if it was current right before our
+        change. Otherwise another program changed the directory as well, i.e.
+        a sidecar was added while importing, and the listing is read again
+        the next time.
+
         :param str path: Path of the file.
         :param bool exists: Whether the file was added or removed.
+        :param int modified_before: Modification time of the directory
+            before the change, from get_directory_modified().
         """
         directory, name = os.path.split(path)
         cached = self.directory_listings.get(directory)
@@ -808,6 +834,9 @@ class FileSystem(object):
         try:
             modified = os.stat(directory).st_mtime_ns
         except OSError:
+            del self.directory_listings[directory]
+            return
+        if cached[0] != modified_before:
             del self.directory_listings[directory]
             return
         index = cached[1]

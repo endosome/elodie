@@ -2295,3 +2295,48 @@ def test_update_directory_listing_keeps_the_index_current():
     assert calls == 0, calls
     assert after_remove == {'img_1': ['IMG_1.jpg']}, after_remove
     assert after_copy == {'img_1': ['IMG_1.jpg', 'img_1.JPEG']}, after_copy
+
+def test_update_directory_listing_after_move():
+    # Moving a file updates the listings of both directories, renaming it
+    #  within a directory updates it once for each name.
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    other_folder = os.path.join(temporary_folder, 'other')
+    os.makedirs(other_folder)
+    _create_files(folder, {'IMG_1.jpg': 'a', 'IMG_2.jpg': 'b'})
+    filesystem.list_directory(folder)
+    filesystem.list_directory(other_folder)
+
+    with mock.patch('elodie.filesystem.os.listdir', wraps=os.listdir) as listdir:
+        time.sleep(0.01)
+        filesystem._file_operation('move', os.path.join(folder, 'IMG_1.jpg'), os.path.join(other_folder, 'IMG_1.jpg'))
+        time.sleep(0.01)
+        filesystem._file_operation('move', os.path.join(folder, 'IMG_2.jpg'), os.path.join(folder, 'renamed.jpg'))
+        index = filesystem.list_directory(folder)
+        other_index = filesystem.list_directory(other_folder)
+        calls = listdir.call_count
+
+    shutil.rmtree(temporary_folder)
+
+    assert calls == 0, calls
+    assert index == {'renamed': ['renamed.jpg']}, index
+    assert other_index == {'img_1': ['IMG_1.jpg']}, other_index
+
+def test_update_directory_listing_after_another_change():
+    # A file added by another program before our change must not be missed,
+    #  i.e. a sidecar which is still being synced while importing.
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    _create_files(folder, {'IMG_1.jpg': 'a', 'IMG_2.jpg': 'b'})
+    photo = os.path.join(folder, 'IMG_2.jpg')
+    filesystem.find_sidecars(photo)
+
+    time.sleep(0.01)
+    _create_files(folder, {'IMG_2.xmp': 'edits'})
+    time.sleep(0.01)
+    filesystem._file_operation('remove', os.path.join(folder, 'IMG_1.jpg'))
+    sidecars = filesystem.find_sidecars(photo)
+
+    shutil.rmtree(temporary_folder)
+
+    assert sidecars == [(os.path.join(folder, 'IMG_2.xmp'), False)], sidecars

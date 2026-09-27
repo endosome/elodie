@@ -73,7 +73,7 @@ The dry-run mode shows you detailed output of what operations would be performed
 
 ### Running in Docker
 
-Instead of installing Python and ExifTool you can run Elodie in Docker. Build the image in the repository you cloned.
+Instead of installing Python and ExifTool you can run Elodie in Docker. Images of releases are published for amd64 and arm64 (i.e. a NAS or a Raspberry Pi with a 64-bit system) as `ghcr.io/endosome/elodie`, use it instead of `elodie` below. Or build the image in the repository you cloned.
 
 ```
 docker build -t elodie .

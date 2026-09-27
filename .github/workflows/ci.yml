@@ -164,24 +164,75 @@ jobs:
           ELODIE_MAPQUEST_KEY: ${{ secrets.ELODIE_MAPQUEST_KEY }}
         run: docker run --rm -e ELODIE_MAPQUEST_KEY elodie-dev pytest elodie/tests -q -n auto --dist loadgroup
 
-      - name: Import and verify a photo with the image
-        run: |
-          mkdir -p app photos/new
-          cp elodie/tests/files/plain.jpg photos/new/
-          run() { docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/app:/elodie" -v "$PWD/photos:/photos" elodie "$@"; }
-          run import --destination /photos/library --trash /photos/new
-          test -f "photos/library/2015-12-Dec/Unknown Location/2015-12-05_00-59-26-plain.jpg"
-          test ! -e photos/new/plain.jpg
-          test -f app/hash.json
-          run verify
+      - name: Check the image
+        run: docker/smoke-test.sh elodie
 
-      - name: Warn when the databases are not mounted or TZ is not set
-        run: |
-          mkdir -p new
-          cp elodie/tests/files/plain.jpg new/
-          docker run --rm -v "$PWD/new:/new" elodie import --dry-run --destination /library /new 2> warnings.txt
-          cat warnings.txt
-          grep -q '/elodie is not mounted' warnings.txt
-          grep -q 'TZ is not set' warnings.txt
-          docker run --rm --user "$(id -u):$(id -g)" -e TZ=Europe/Warsaw -v "$PWD/app:/elodie" -v "$PWD/new:/new" elodie import --dry-run --destination /library /new 2> warnings.txt
-          test ! -s warnings.txt
+  publish:
+    # The image of a release (a tag, i.e. v1.2.3) for amd64 and arm64 (i.e. a
+    #  NAS or a Raspberry Pi) after all tests passed, as
+    #  ghcr.io/<owner>/elodie. The arm64 image is checked with QEMU.
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [test, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      EXIFTOOL_VERSION: "13.59"
+      EXIFTOOL_SHA256: "87d3317882fdae9cb4dcfe57a96a378d0132ffc02c731315bf128b19ddcf7aac"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build the image for arm64
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/arm64
+          build-args: |
+            EXIFTOOL_VERSION=${{ env.EXIFTOOL_VERSION }}
+            EXIFTOOL_SHA256=${{ env.EXIFTOOL_SHA256 }}
+          load: true
+          tags: elodie:arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Check the image for arm64
+        run: docker/smoke-test.sh elodie:arm64 linux/arm64
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tags and labels of the image
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # 1.2.3, 1.2, 1 and latest for v1.2.3, only the tag for others
+          #  (i.e. 1.0.0-alpha1)
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=ref,event=tag
+
+      - name: Publish the image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            EXIFTOOL_VERSION=${{ env.EXIFTOOL_VERSION }}
+            EXIFTOOL_SHA256=${{ env.EXIFTOOL_SHA256 }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha

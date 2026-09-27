@@ -87,8 +87,9 @@ def import_file(_file, destination, album_from_folder, trash, allow_duplicates, 
         elif constants.dry_run:
             print(f"[DRY-RUN] Would move to trash: {_file}")
         else:
+            modified = FILESYSTEM.get_directory_modified(_file)
             send2trash(_file)
-            FILESYSTEM.update_directory_listing(_file, exists=False)
+            FILESYSTEM.update_directory_listing(_file, False, modified)
 
         # Sidecars which were imported with the file follow it to the trash
         #  unless another file still uses them (i.e. IMG_1234.JPG and
@@ -100,8 +101,9 @@ def import_file(_file, destination, album_from_folder, trash, allow_duplicates, 
             if constants.dry_run:
                 print(f"[DRY-RUN] Would move to trash: {sidecar}")
             else:
+                modified = FILESYSTEM.get_directory_modified(sidecar)
                 send2trash(sidecar)
-                FILESYSTEM.update_directory_listing(sidecar, exists=False)
+                FILESYSTEM.update_directory_listing(sidecar, False, modified)
 
     return dest_path or None
 

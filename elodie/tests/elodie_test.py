@@ -1586,3 +1586,47 @@ def test_import_send_to_trash_reads_source_folder_once(mock_send2trash):
     assert result.exit_code == 0, result.output
     assert left == [], left
     assert len(source_listings) == 1, source_listings
+
+@mock.patch.object(elodie, 'send2trash')
+def test_import_send_to_trash_finds_sidecar_added_during_import(mock_send2trash):
+    # A sidecar added by another program while importing is imported with its
+    #  photo although the folder changes when each file is trashed.
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    photos = []
+    for i in range(2):
+        photo = os.path.join(folder, 'IMG_%d.jpg' % i)
+        shutil.copyfile(helper.get_file('plain.jpg'), photo)
+        ExifTool().execute(b'-overwrite_original', ('-EXIF:DateTimeOriginal=2019:05:26 10:33:2%d' % i).encode(), photo.encode())
+        photos.append(photo)
+    mock_send2trash.side_effect = os.remove
+    process_file = elodie.FILESYSTEM.process_file
+    added = []
+
+    def process_file_then_add_sidecar(_file, *args, **kwargs):
+        dest_path = process_file(_file, *args, **kwargs)
+        if not added:
+            # The sidecar of the file which is imported next
+            other = photos[1] if _file == photos[0] else photos[0]
+            time.sleep(0.01)
+            with open(os.path.splitext(other)[0] + '.xmp', 'w') as f:
+                f.write('edits')
+            added.append(other)
+            time.sleep(0.01)
+        return dest_path
+
+    runner = CliRunner()
+    with mock.patch.object(elodie.FILESYSTEM, 'process_file', side_effect=process_file_then_add_sidecar):
+        result = runner.invoke(elodie._import, ['--destination', folder_destination, '--trash', folder])
+    left = os.listdir(folder)
+    library_sidecars = [
+        name for dirname, dirnames, names in os.walk(folder_destination)
+        for name in names if name.endswith('.xmp')
+    ]
+
+    shutil.rmtree(temporary_folder)
+    shutil.rmtree(temporary_folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert left == [], left
+    assert len(library_sidecars) == 1, library_sidecars

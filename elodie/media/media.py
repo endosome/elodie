@@ -246,6 +246,10 @@ class Media(Base):
             return True
 
         tags = {self.album_keys[0]: album}
+        if not album:
+            # Remove the album from all keys it is read from, otherwise the
+            #  value of a fallback key would become the album.
+            tags = {key: '' for key in self.album_keys}
         status = self.__set_tags(tags)
         self.reset_cache()
 

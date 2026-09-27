@@ -240,7 +240,7 @@ class FileSystem(object):
                     if metadata[part]:
                         this_value = re.sub(self.whitespace_regex, '-', metadata[part].strip())
                         break
-                elif part in ('original_name'):
+                elif part == 'original_name':
                     # First we check if we have metadata['original_name'].
                     # We have to do this for backwards compatibility because
                     #   we original did not store this back into EXIF.
@@ -280,9 +280,13 @@ class FileSystem(object):
                     name,
                 )
             else:
+                # Values come from metadata, a / in a title must not make
+                #  a folder. The value is inserted as it is, re.sub would
+                #  interpret backslashes in it.
+                this_value = re.sub(r'[/\\]', '-', this_value)
                 name = re.sub(
                     '%{}'.format(part),
-                    this_value,
+                    lambda match: this_value,
                     name,
                 )
 
@@ -332,7 +336,9 @@ class FileSystem(object):
                      )
 
         if not path_parts or len(path_parts) == 0:
-            return (config_file['name'], self.default_file_name_definition)
+            # A name without placeholders is used as it is
+            self.cached_file_name_definition = (config_file['name'], [])
+            return self.cached_file_name_definition
 
         self.cached_file_name_definition = []
         for part in path_parts:
@@ -395,7 +401,10 @@ class FileSystem(object):
                      )
 
         if not path_parts or len(path_parts) == 0:
-            return self.default_folder_path_definition
+            # A path without placeholders is used as it is
+            self.cached_folder_path_definition = [
+                [('"{}"'.format(config_directory['full_path']), '')]]
+            return self.cached_folder_path_definition
 
         self.cached_folder_path_definition = []
         for part in path_parts:
@@ -491,7 +500,16 @@ class FileSystem(object):
             else:
                 if partial_path:
                     path.append(partial_path.strip())
-        return os.path.join(*path)
+        # Values come from metadata, i.e. an album. A / makes a subfolder
+        #  but . and .. must not leave the folder.
+        folders = []
+        for folder in path:
+            folders.extend(part for part in re.split(r'[/\\]', folder)
+                           if part.strip() not in ('', '.', '..'))
+        if not folders:
+            # i.e. %album for a file without an album
+            return ''
+        return os.path.join(*folders)
 
     def get_dynamic_path(self, part, mask, metadata):
         """Parse a specific folder's name given a mask and metadata.
@@ -665,6 +683,50 @@ class FileSystem(object):
                 ))
         return checksum
 
+    def get_destination_path(self, _file, destination, metadata,
+                             checksum=None):
+        """Get the path of a file in the library.
+
+        A different file with the same name, i.e. a photo of another camera
+        taken in the same second, is never replaced: -1, -2, ... is added to
+        the name. The file itself, a file with the same content or the copy
+        of the file which was imported before (with --allow-duplicates) keep
+        it.
+
+        :param str _file: Path of the file.
+        :param str destination: Folder of the library.
+        :param dict metadata: Metadata of the file.
+        :param str checksum: Checksum of the file, to find its copy.
+        :returns: str or None if the path would be outside of the library
+        """
+        dest_path = os.path.normpath(os.path.join(
+            destination,
+            self.get_folder_path(metadata),
+            self.get_file_name(metadata),
+        ))
+        library = os.path.abspath(destination)
+        absolute_path = os.path.abspath(dest_path)
+        if os.path.commonpath([library, absolute_path]) != library:
+            # i.e. [File] name=%original_name with an absolute original name
+            log.error('Not importing %s, its path %s is outside of %s' % (
+                _file, dest_path, destination))
+            return None
+
+        # Its copy has metadata written to it, i.e. its original name
+        imported_path = Db().get_hash(checksum) if checksum else None
+
+        base, extension = os.path.splitext(dest_path)
+        candidate = dest_path
+        count = 0
+        while (os.path.exists(candidate) and
+                not self.is_same_file(_file, candidate) and
+                not (imported_path and
+                     self.is_same_file(imported_path, candidate)) and
+                not filecmp.cmp(_file, candidate, shallow=False)):
+            count += 1
+            candidate = '%s-%d%s' % (base, count, extension)
+        return candidate
+
     def process_file(self, _file, destination, media, **kwargs):
         self.skipped_as_duplicate = False
         self.imported_sidecars = []
@@ -700,10 +762,11 @@ class FileSystem(object):
             log.warn('At least one plugin pre-run failed for %s' % _file)
             return
 
-        directory_name = self.get_folder_path(metadata)
-        dest_directory = os.path.join(destination, directory_name)
-        file_name = self.get_file_name(metadata)
-        dest_path = os.path.join(dest_directory, file_name)        
+        dest_path = self.get_destination_path(
+            _file, destination, metadata, checksum)
+        if dest_path is None:
+            return
+        dest_directory = os.path.dirname(dest_path)
 
         # If source and destination are identical then
         #  we should not write the file. gh-210

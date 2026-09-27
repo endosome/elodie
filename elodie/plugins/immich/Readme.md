@@ -65,7 +65,7 @@ A photo is only read again when its file changed since the last run, so runs on 
 
 Albums are stored in `XMP-xmpDM:Album`, the album Elodie uses. Immich lets a photo be in several albums, they are stored separated by `;`, i.e. `Summer;Family`. That's also the name of the folder when your folders include the album.
 
-Album names containing `;` can't be stored and are not synced. Immich albums with the same name are one album for the plugin, photos are added to the oldest one.
+Album names which can't be a folder name are not synced: names containing `;`, `/` or `\`, `.`, `..` and names starting or ending with a space. Such albums stay as they are in Immich and in the photos. Immich albums with the same name are one album for the plugin, photos are added to the oldest one.
 
 ### Favorites
 
@@ -74,6 +74,7 @@ A favorite in Immich is a rating of 5 in the photo (`XMP:Rating`). Removing the 
 ## Limitations
 
 * Only albums and favorites are synced. Immich reads descriptions, locations and dates from the photos when it scans them.
+* Some formats can't store albums and favorites, i.e. MKV and WebM videos which ExifTool can't change. Their albums and favorites are only kept in Immich.
 * When you change the album of a photo with Elodie before a run synced a change made in Immich, the change made in Immich is lost. Run `./elodie.py batch` before updating photos with Elodie.
 * Only photos and videos in the external library are synced, not the ones uploaded to Immich.
 

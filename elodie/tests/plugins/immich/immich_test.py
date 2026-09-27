@@ -17,6 +17,7 @@ from elodie import constants
 from elodie.config import load_config
 from elodie.filesystem import FileSystem
 from elodie.media.photo import Photo
+from elodie.media.video import Video
 from elodie.plugins.immich import immich as immich_module
 from elodie.plugins.immich.immich import (
     Immich, ImmichApiClient, ImmichError, get_album_names, merge_states)
@@ -754,3 +755,83 @@ def test_client_reports_an_api_url_without_api(status, body):
         with pytest.raises(ImmichError, match='not a response of the Immich API, api_url must end with /api'):
             client.get_version()
     assert request.call_count == 1
+
+def create_file(library, name, fixture):
+    """Import a file into the library with Elodie, so it has the path Elodie
+    gives it."""
+    source = os.path.join(os.path.dirname(library), name)
+    shutil.copyfile(helper.get_file(fixture), source)
+    media = Video(source) if name.endswith(('.mov', '.webm')) else Photo(source)
+    return FileSystem().process_file(source, library, media, move=True)
+
+def test_videos_are_synced(library, immich):
+    path = create_file(library, 'clip.mov', 'video.mov')
+    immich.scan()
+    run_batch(immich)
+    immich.add_album('Trip', ['clip.mov'])
+    immich.asset_for('clip.mov')['isFavorite'] = True
+
+    result = run_batch(immich)
+
+    video = Video(find_file(library, 'clip.mov'))
+    assert result == (True, 1), result
+    assert (video.get_album(), video.get_rating()) == ('Trip', 5)
+    assert not os.path.exists(path)
+
+def test_files_which_cannot_store_albums_keep_them_in_immich(library, immich):
+    # ExifTool cannot write to WebM files. If the plugin took the album for
+    #  stored, it would remove it from Immich once the file changes.
+    path = create_file(library, 'clip.webm', 'video.webm')
+    immich.scan()
+    run_batch(immich)
+    immich.add_album('Trip', ['clip.webm'])
+    immich.asset_for('clip.webm')['isFavorite'] = True
+
+    with mock.patch.object(Immich, 'display') as display:
+        result = run_batch(immich)
+    messages = [c[0][0] for c in display.call_args_list]
+    # The file changes, i.e. it was copied back from a backup
+    os.utime(path, (0, 0))
+    with mock.patch.object(Immich, 'display') as display:
+        second = run_batch(immich)
+        third = run_batch(immich)
+
+    assert result == (True, 0), messages
+    assert 'Albums and favorites cannot be stored in %s, they are kept in Immich only' % path in messages
+    assert find_file(library, 'clip.webm') == path
+    assert immich.albums_of('clip.webm') == ['Trip']
+    assert immich.asset_for('clip.webm')['isFavorite'] is True
+    assert second == third == (True, 0), display.call_args_list
+
+@pytest.mark.parametrize('name', ['../../escape', '..', 'Trips/2024', 'Trips\\2024', ''])
+def test_album_names_which_are_no_folder_name_are_not_synced(library, immich, name):
+    # The album of a file is part of its folder, Elodie uses it as it is
+    path = create_photo(library, 'a.jpg')
+    immich.scan()
+    immich.add_album(name, ['a.jpg'])
+
+    with mock.patch.object(Immich, 'display') as display:
+        result = run_batch(immich)
+
+    assert result == (True, 0), display.call_args_list
+    assert find_file(library, 'a.jpg') == path
+    assert file_state(library, 'a.jpg') == ([], False)
+    assert mock.call('Album "%s" is not synced, its name cannot be stored in a file' % name) in display.call_args_list
+
+def test_album_names_of_files_which_are_no_folder_name_stay_as_they_are(library, immich):
+    # i.e. set with elodie.py update --album "2024/Trips"
+    path = create_photo(library, 'a.jpg', album='Summer')
+    Photo(path).set_album('2024/Trips;Summer')
+    immich.scan()
+    run_batch(immich)
+    immich.add_album('Family', ['a.jpg'])
+
+    with mock.patch.object(Immich, 'display'):
+        run_batch(immich)
+        immich.scan()
+        run_batch(immich)
+        result = run_batch(immich)
+
+    assert result == (True, 0), result
+    assert get_album_names(Photo(find_file(library, 'a.jpg')).get_album()) == ['2024/Trips', 'Family', 'Summer']
+    assert immich.albums_of('a.jpg') == ['Family', 'Summer']

@@ -4,6 +4,7 @@ import itertools
 import os
 import shutil
 import sys
+import time
 import unittest.mock as mock
 
 import pytest
@@ -44,6 +45,10 @@ class FakeImmich(object):
         self.ids = itertools.count(1)
         self.requests = []
         self.fail_album_additions = False
+        # Asset IDs which the next album search misses, like Immich does
+        #  when assets change while its offset based pages are read
+        self.skip_in_album_search = set()
+        self.skip_in_search = set()
 
     def scan(self):
         own = [a for a in self.assets.values() if a['ownerId'] == 'me']
@@ -86,11 +91,11 @@ class FakeImmich(object):
         return sorted(album['albumName'] for album in self.albums.values()
                       if asset_id in album['assetIds'])
 
-    def add_album(self, name, asset_names=()):
+    def add_album(self, name, asset_names=(), owner='me'):
         album_id = 'album-%d' % next(self.ids)
         self.albums[album_id] = {
             'albumName': name, 'createdAt': '2026-01-01T00:00:%02d' % len(self.albums),
-            'assetIds': set(self.asset_for(n)['id'] for n in asset_names)}
+            'owner': owner, 'assetIds': set(self.asset_for(n)['id'] for n in asset_names)}
         return album_id
 
     def album_id(self, name):
@@ -103,10 +108,12 @@ class FakeImmich(object):
     def get_my_user_id(self):
         return 'me'
 
-    def get_albums(self):
+    def get_albums(self, owned=False, asset_id=None):
         self.requests.append('get_albums')
         return [{'id': album_id, 'albumName': a['albumName'], 'createdAt': a['createdAt'],
-                 'assetCount': len(a['assetIds'])} for album_id, a in self.albums.items()]
+                 'assetCount': len(a['assetIds'])} for album_id, a in self.albums.items()
+                if (not owned or a['owner'] == 'me') and
+                (asset_id is None or asset_id in a['assetIds'])]
 
     def create_album(self, name):
         self.requests.append(('create_album', name))
@@ -151,6 +158,12 @@ class FakeImmich(object):
                 album_ids = search_filter['albumIds']['any']
                 if not any(asset['id'] in self.albums[i]['assetIds'] for i in album_ids):
                     continue
+                if asset['id'] in self.skip_in_album_search:
+                    self.skip_in_album_search.discard(asset['id'])
+                    continue
+            elif asset['id'] in self.skip_in_search:
+                self.skip_in_search.discard(asset['id'])
+                continue
             yield dict(asset)
 
 
@@ -603,9 +616,14 @@ def test_state_of_assets_which_are_gone_is_removed(library, immich):
     run_batch(immich)
     offline = sorted(Immich().load_state())
     del immich.assets[b]
+    # Kept for a while, a search can miss an asset when Immich changes
+    #  while it is read
     run_batch(immich)
+    missing = sorted(Immich().load_state())
+    with mock.patch('time.time', return_value=time.time() + 61 * 24 * 3600):
+        run_batch(immich)
 
-    assert offline == sorted([a, b])
+    assert offline == missing == sorted([a, b])
     assert list(Immich().load_state()) == [a]
 
 # The API client
@@ -989,3 +1007,53 @@ def test_assets_of_partners_are_not_synced(library, immich):
     assert file_state(library, 'a.jpg') == (['Summer'], False)
     assert theirs['isFavorite'] is True
     assert not any(theirs['id'] in str(r) for r in immich.requests)
+
+def test_albums_shared_by_other_users_are_not_synced(library, immich):
+    # Albums of others must not change or move the files of the user, i.e.
+    #  an album which a partner shares with the user and contains their photo
+    path = create_photo(library, 'a.jpg', album='Summer')
+    immich.scan()
+    theirs = immich.add_album('Summer', ['a.jpg'], owner='partner')
+    immich.add_album('Theirs', ['a.jpg'], owner='partner')
+
+    run_batch(immich)
+    immich.albums[theirs]['assetIds'].clear()
+    result = run_batch(immich)
+
+    assert result == (True, 0), result
+    assert find_file(library, 'a.jpg') == path
+    assert file_state(library, 'a.jpg') == (['Summer'], False)
+    # The album of the file is an own album, the ones of the partner stay
+    asset_id = immich.asset_for('a.jpg')['id']
+    own = [a['albumName'] for a in immich.albums.values() if a['owner'] == 'me' and asset_id in a['assetIds']]
+    assert own == ['Summer'], own
+    assert immich.albums[theirs]['assetIds'] == set()
+    assert immich.albums_of('a.jpg') == ['Summer', 'Theirs']
+
+def test_album_missing_from_a_page_of_the_search_is_not_removed(library, immich):
+    # Immich pages search results by offset, when assets change while they
+    #  are read one can be missing. That is no removal.
+    path = create_photo(library, 'a.jpg', album='Summer')
+    immich.scan()
+    run_batch(immich)
+    immich.skip_in_album_search.add(immich.asset_for('a.jpg')['id'])
+
+    result = run_batch(immich)
+
+    assert result == (True, 0), result
+    assert find_file(library, 'a.jpg') == path
+    assert file_state(library, 'a.jpg') == (['Summer'], False)
+
+def test_asset_missing_from_a_page_of_the_search_keeps_its_state(library, immich):
+    create_file(library, 'a.jpg', 'plain.jpg', album='Summer')
+    immich.scan()
+    run_batch(immich)
+    asset = immich.asset_for('a.jpg')
+    immich.skip_in_search.add(asset['id'])
+    run_batch(immich)
+    # A removal in Immich is still recognized as one
+    immich.albums[immich.album_id('Summer')]['assetIds'].discard(asset['id'])
+
+    run_batch(immich)
+
+    assert file_state(library, 'a.jpg') == ([], False)

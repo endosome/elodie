@@ -67,6 +67,8 @@ The state of the last run is stored in `plugins/immich.json` in Elodie's applica
 
 Albums are stored in `XMP-xmpDM:Album`, the album Elodie uses. Immich lets a photo be in several albums, they are stored separated by `;`, i.e. `Summer;Family`. That's also the name of the folder when your folders include the album.
 
+Only your own albums are synced. Albums which other users share with you, even when they contain your photos, don't change your photos.
+
 Album names which can't be a folder name are not synced: names containing `;`, `/` or `\`, `.`, `..` and names starting or ending with a space. Such albums stay as they are in Immich and in the photos. Immich albums with the same name are one album for the plugin, photos are added to the oldest one.
 
 ### Favorites

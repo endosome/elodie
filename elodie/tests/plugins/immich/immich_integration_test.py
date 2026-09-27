@@ -336,3 +336,28 @@ def test_trashed_assets_are_not_synced(setup):
     server.call('POST', '/trash/restore/assets', json={'ids': [asset]})
     run_batch()
     assert file_state(library, 'a.jpg')[:2] == ([names('Summer')], True)
+
+def test_albums_shared_by_other_users_are_not_synced(setup):
+    # Albums of others must not change or move the files of the user
+    library, server, names = setup
+    path = create_photo(library, 'a.jpg', album=names('Summer'))
+    server.scan(library)
+    email = '%s@example.com' % names('other').replace(' ', '-')
+    other = server.call('POST', '/admin/users', json={'email': email, 'password': 'other-password', 'name': 'Other'})
+    try:
+        session = requests.Session()
+        token = session.post(ENV['API_URL'] + '/auth/login', json={'email': email, 'password': 'other-password'}).json()['accessToken']
+        session.headers['Authorization'] = 'Bearer ' + token
+        me = server.call('GET', '/users/me')
+        theirs = session.post(ENV['API_URL'] + '/albums', json={
+            'albumName': names('Theirs'), 'albumUsers': [{'userId': me['id'], 'role': 'editor'}]}).json()
+        server.call('PUT', '/albums/%s/assets' % theirs['id'], json={'ids': [server.assets()['a.jpg']['id']]})
+
+        result, messages = run_batch()
+        second, messages = run_batch()
+    finally:
+        server.call('DELETE', '/admin/users/%s' % other['id'], json={'force': True})
+
+    assert result == (True, 1), messages
+    assert second == (True, 0), messages
+    assert file_state(library, 'a.jpg') == ([names('Summer')], False, path)

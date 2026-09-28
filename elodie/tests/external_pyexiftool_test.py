@@ -150,6 +150,17 @@ def test_execute_after_exiftool_was_killed():
 
     assert version.strip().startswith(b'13.'), version
 
+def _is_running(pid):
+    # An exited process which was not reaped yet (a zombie) does not run. It
+    #  stays when the process which inherits it does not reap it, i.e. when
+    #  the tests run as the first process of a container.
+    try:
+        with open('/proc/%d/stat' % pid) as f:
+            return f.read().rsplit(')', 1)[1].split()[0] != 'Z'
+    except (FileNotFoundError, ProcessLookupError):
+        # It ended before or while it was read
+        return False
+
 @pytest.mark.skipif(not sys.platform.startswith('linux'), reason='Only Linux can end a process with its parent')
 def test_exiftool_exits_when_elodie_is_killed():
     # With -stay_open ExifTool does not exit at the end of its input, it
@@ -172,9 +183,7 @@ def test_exiftool_exits_when_elodie_is_killed():
     elodie.wait()
     running = True
     for i in range(100):
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+        if not _is_running(pid):
             running = False
             break
         time.sleep(0.1)

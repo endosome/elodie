@@ -879,17 +879,26 @@ class FileSystem(object):
                 return str(exif[key])
         return None
 
-    def find_live_photo_video(self, photo_path, media):
+    def find_live_photo_video(self, photo_path, media, with_media=False):
         """Find the video of an Apple Live Photo: a video in the same
         directory with the same name, ignoring case, and the same content
         identifier as the photo, i.e. IMG_1234.MOV for IMG_1234.HEIC. gh-474
 
         :param str photo_path: Path of the photo.
         :param media: Media object of the photo.
-        :returns: str path of the video or None
+        :param bool with_media: Also return the Video object of the video,
+            which read its metadata already, to use it for the video.
+        :returns: str path of the video or None, a tuple of it and the
+            Video object with with_media
         """
+        found = self._find_live_photo_video(photo_path, media)
+        if with_media:
+            return found
+        return found[0]
+
+    def _find_live_photo_video(self, photo_path, media):
         if not isinstance(media, Photo):
-            return None
+            return None, None
 
         # The identifier of the photo is only read when there is a video
         #  with the same name.
@@ -903,17 +912,17 @@ class FileSystem(object):
                 if os.path.isfile(path):
                     candidates.append(path)
         if not candidates:
-            return None
+            return None, None
 
         content_identifier = self.get_content_identifier(media)
         if content_identifier is None:
-            return None
+            return None, None
         for path in sorted(candidates):
             video = Video(path)
             if (video.is_valid() and
                     self.get_content_identifier(video) == content_identifier):
-                return path
-        return None
+                return path, video
+        return None, None
 
     def find_live_photo_photo(self, video_path):
         """Find the photo of the video of an Apple Live Photo, the reverse

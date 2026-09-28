@@ -53,11 +53,14 @@ TIME_FORMATS = ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d')
 
 
 def import_file(_file, destination, album_from_folder, trash,
-                allow_duplicates, location=None, time=None, dest_path=None):
+                allow_duplicates, location=None, time=None, dest_path=None,
+                media=None):
     """Set file metadata and move it to destination.
 
     :param str dest_path: Import the file to this path instead of the one
         from its metadata, i.e. the video of a Live Photo next to its photo.
+    :param media: Media object of the file which read its metadata already,
+        i.e. the video of a Live Photo.
     """
     FILESYSTEM.skipped_as_duplicate = False
     FILESYSTEM.imported_sidecars = []
@@ -78,7 +81,8 @@ def import_file(_file, destination, album_from_folder, trash,
         return
 
 
-    media = Media.get_class_by_file(_file, get_all_subclasses())
+    if media is None:
+        media = Media.get_class_by_file(_file, get_all_subclasses())
     if not media:
         log.warn('Not a supported file (%s)' % _file)
         log.all('{"source":"%s", "error_msg":"Not a supported file"}' % _file)
@@ -99,9 +103,10 @@ def import_file(_file, destination, album_from_folder, trash,
 
     # The video of a Live Photo is imported with its photo, it is looked
     #  for before the photo can be moved to the trash. gh-474
-    live_photo_video = None
+    live_photo_video = video_media = None
     if dest_path is None:
-        live_photo_video = FILESYSTEM.find_live_photo_video(_file, media)
+        live_photo_video, video_media = FILESYSTEM.find_live_photo_video(
+            _file, media, with_media=True)
         if live_photo_video is None:
             dest_path = get_live_photo_video_dest_path(_file)
 
@@ -117,7 +122,8 @@ def import_file(_file, destination, album_from_folder, trash,
     if live_photo_video:
         video = import_live_photo_video(
             live_photo_video, _file, dest_path, skipped_as_duplicate,
-            destination, album_from_folder, allow_duplicates, location, time)
+            destination, album_from_folder, allow_duplicates, location, time,
+            video_media)
         # The result is the one of the photo
         FILESYSTEM.skipped_as_duplicate = skipped_as_duplicate
         FILESYSTEM.imported_sidecars = imported_sidecars
@@ -184,7 +190,7 @@ def send_to_trash(path):
 def import_live_photo_video(video, photo, photo_dest_path,
                             photo_skipped_as_duplicate, destination,
                             album_from_folder, allow_duplicates, location,
-                            time):
+                            time, video_media=None):
     """Import the video of a Live Photo next to its photo with the same
     name, whatever its own date and location say. gh-474
 
@@ -217,7 +223,8 @@ def import_live_photo_video(video, photo, photo_dest_path,
                 video, destination, album_from_folder, False,
                 allow_duplicates, location, time,
                 dest_path=FILESYSTEM.get_live_photo_video_path(
-                    photo_dest_path, video))
+                    photo_dest_path, video),
+                media=video_media)
             sidecars = FILESYSTEM.imported_sidecars
             if video_dest_path:
                 status = True
@@ -614,12 +621,15 @@ def get_library_directory(media, file_path):
     return os.sep.join(parts[:-depth]) or os.sep
 
 
-def update_file(current_file, album, location, time, title, dest_path=None):
+def update_file(current_file, album, location, time, title, dest_path=None,
+                media=None):
     """Update the metadata of a file and move it to its folder in the
     library.
 
     :param str dest_path: Move the file to this path instead of the one from
         its metadata, i.e. the video of a Live Photo next to its photo.
+    :param media: Media object of the file which read its metadata already,
+        i.e. the video of a Live Photo.
     :returns: bool
     """
     if not os.path.exists(current_file):
@@ -628,22 +638,23 @@ def update_file(current_file, album, location, time, title, dest_path=None):
                   (current_file, current_file))
         return False
 
-    media = Media.get_class_by_file(current_file, get_all_subclasses())
+    if media is None:
+        media = Media.get_class_by_file(current_file, get_all_subclasses())
     if not media:
         log.warn('Not a supported file (%s)' % current_file)
         log.all('{"source":"%s", "error_msg":"Not a supported file"}' %
                 current_file)
         return False
 
-    live_photo_video = None
+    live_photo_video = video_media = None
     if dest_path is None:
         # The library is found from the folders of the metadata before the
         #  update.
         destination = get_library_directory(media, current_file)
         # The video of a Live Photo follows its photo with the same
         #  changes, it is looked for before the photo is moved. gh-474
-        live_photo_video = FILESYSTEM.find_live_photo_video(
-            current_file, media)
+        live_photo_video, video_media = FILESYSTEM.find_live_photo_video(
+            current_file, media, with_media=True)
     else:
         destination = os.path.dirname(dest_path)
 
@@ -652,7 +663,7 @@ def update_file(current_file, album, location, time, title, dest_path=None):
 
     if live_photo_video:
         update_live_photo_video(live_photo_video, current_file, new_path,
-                                album, location, time, title)
+                                album, location, time, title, video_media)
     return bool(new_path)
 
 
@@ -723,7 +734,7 @@ def update_media(media, current_file, destination, album, location, time,
 
 
 def update_live_photo_video(video, photo, photo_dest_path, album, location,
-                            time, title):
+                            time, title, video_media=None):
     """Update the video of a Live Photo like its photo and move it next to
     it. gh-474
     """
@@ -739,7 +750,8 @@ def update_live_photo_video(video, photo, photo_dest_path, album, location,
             status = update_file(
                 video, album, location, time, title,
                 dest_path=FILESYSTEM.get_live_photo_video_path(
-                    photo_dest_path, video))
+                    photo_dest_path, video),
+                media=video_media)
         except Exception as e:
             report_exception(video, e)
             status = False

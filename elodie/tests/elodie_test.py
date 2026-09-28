@@ -2968,3 +2968,30 @@ def test_import_live_photo_video_on_its_own_when_its_photo_was_not_imported():
     assert result.exit_code == 0, result.output
     videos = [f for f in library if f.endswith('.mov')]
     assert len(videos) == 1 and os.path.basename(videos[0]).startswith('2018-01-01'), library
+
+def test_live_photo_video_is_read_once_for_its_pairing_and_import():
+    # Its metadata was read to pair it and again to import or update it,
+    #  an ExifTool call for each Live Photo of a large import
+    import collections
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    helper.create_live_photo(folder)
+    reads = collections.Counter()
+    get_metadata = ExifTool.get_metadata
+
+    def counted(self, filename):
+        reads[os.path.splitext(filename)[1].lower()] += 1
+        return get_metadata(self, filename)
+    with mock.patch.object(ExifTool, 'get_metadata', counted):
+        imported = CliRunner().invoke(elodie._import, ['--destination', folder_destination, folder])
+        reads_of_import = dict(reads)
+        reads.clear()
+        photo = os.path.join(folder_destination, [f for f in _files_in(folder_destination) if f.endswith('.heic')][0])
+        updated = CliRunner().invoke(elodie._update, ['--album', 'Holidays', photo])
+        reads_of_update = dict(reads)
+
+    assert 'Success                        2' in imported.output, imported.output
+    assert 'Success                        2' in updated.output, updated.output
+    # The source and its copy, the file before and after it was updated
+    assert reads_of_import['.mov'] == 2, reads_of_import
+    assert reads_of_update['.mov'] == 2, reads_of_update

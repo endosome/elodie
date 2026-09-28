@@ -494,6 +494,7 @@ def test_writes_at_the_same_time_do_not_fail():
     assert errors == [], errors
     assert [f for f in os.listdir(directory) if f.endswith('.tmp')] == []
 
+@pytest.mark.skipif(helper.is_windows(), reason='Windows has no permissions like 0o640')
 def test_write_keeps_the_permissions_of_the_database():
     import stat
     db = Db()

@@ -1455,24 +1455,25 @@ def test_update_with_directory_passed_in():
 
 def test_update_invalid_file_exit_code():
     temporary_folder, folder = helper.create_working_folder()
-    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    # In a library, update moves a file within it. Outside of one the file
+    #  went into the parent folders of the test, /tmp/2015-12-Dec.
+    library_folder = os.path.join(folder, 'library', '2015-12-Dec', 'Unknown Location')
+    os.makedirs(library_folder)
 
     # use a good and bad
-    origin_invalid = '%s/invalid.jpg' % folder
+    origin_invalid = os.path.join(library_folder, 'invalid.jpg')
     shutil.copyfile(helper.get_file('invalid.jpg'), origin_invalid)
 
-    origin_valid = '%s/valid.jpg' % folder
+    origin_valid = os.path.join(library_folder, '2015-12-05_00-59-26-valid.jpg')
     shutil.copyfile(helper.get_file('plain.jpg'), origin_valid)
 
-    helper.reset_dbs()
     runner = CliRunner()
     result = runner.invoke(elodie._update, ['--album', 'test', origin_invalid, origin_valid])
-    helper.restore_dbs()
-
-    shutil.rmtree(folder)
-    shutil.rmtree(folder_destination)
+    library = _library_files(os.path.join(folder, 'library'))
 
     assert result.exit_code == 1, result.exit_code
+    assert library == [os.path.join('2015-12-Dec', 'Unknown Location', 'invalid.jpg'),
+                       os.path.join('2015-12-Dec', 'test', '2015-12-05_00-59-26-valid.jpg')], library
 
 def test_regenerate_db_invalid_source():
     runner = CliRunner()
@@ -2387,6 +2388,7 @@ def test_import_apple_double_file_given_explicitly():
     assert 'Error                          1' in result.output, result.output
     assert _files_in(folder_destination) == []
 
+@mock.patch('elodie.localstorage.WRITE_EVERY_SECONDS', 3600)
 def test_import_loads_and_writes_the_hash_db_once():
     # For each file the databases were loaded and hash.json was written,
     #  which took seconds per file for a large library
@@ -2467,8 +2469,7 @@ def test_ctrl_c_keeps_the_files_imported_before_in_the_hash_db():
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True,
         cwd=os.path.dirname(elodie_path), env=dict(os.environ, ELODIE_APPLICATION_DIRECTORY=application_directory))
     try:
-        while process.stdout.readline().strip() != 'started':
-            pass
+        _wait_for_line(process.stdout, 'started')
         os.killpg(process.pid, signal.SIGINT)
         output, _ = process.communicate(timeout=30)
     finally:
@@ -2480,6 +2481,15 @@ def test_ctrl_c_keeps_the_files_imported_before_in_the_hash_db():
     assert process.returncode == 1, output
     # a.jpg and b.jpg, with the checksums of the sources and of the copies
     assert len(set(hash_db.values())) == 2, hash_db
+
+def _wait_for_line(stream, text):
+    # Fails if the process ends before, instead of waiting forever
+    lines = []
+    for line in iter(stream.readline, ''):
+        if line.strip() == text:
+            return
+        lines.append(line)
+    pytest.fail('%s was not printed: %s' % (text, ''.join(lines)))
 
 def _run_elodie(args, application_directory, **kwargs):
     return subprocess.Popen(
@@ -2517,27 +2527,39 @@ def test_commands_which_change_the_databases_wait_for_another_run(command):
     temporary_folder, folder = helper.create_working_folder()
     temporary_folder_destination, folder_destination = helper.create_working_folder()
     shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'plain.jpg'))
+    # update moves a file within its library
+    library_file = os.path.join(folder_destination, '2015-12-Dec', 'Unknown Location', '2015-12-05_00-59-26-plain.jpg')
+    if command == 'update':
+        os.makedirs(os.path.dirname(library_file))
+        shutil.move(os.path.join(folder, 'plain.jpg'), library_file)
     application_directory = tempfile.mkdtemp()
     args = {
         'import': ['import', '--destination', folder_destination, folder],
-        'update': ['update', '--album', 'Trip', os.path.join(folder, 'plain.jpg')],
+        'update': ['update', '--album', 'Trip', library_file],
         'generate-db': ['generate-db', '--source', folder],
     }[command]
+    hash_db = os.path.join(application_directory, 'hash.json')
 
+    def state():
+        return (_library_files(folder), _library_files(folder_destination),
+                os.path.exists(hash_db) and os.path.getsize(hash_db))
+    before = state()
     with mock.patch.dict(os.environ, {'ELODIE_APPLICATION_DIRECTORY': application_directory}):
         with Db.lock():
             process = _run_elodie(args, application_directory)
             waiting = process.stderr.readline()
-            hash_db = os.path.join(application_directory, 'hash.json')
-            unchanged_while_locked = (os.listdir(folder_destination) == [] and os.listdir(folder) == ['plain.jpg'] and
-                                      not (os.path.exists(hash_db) and os.path.getsize(hash_db)))
+            while_locked = state()
     output, _ = process.communicate(timeout=60)
+    after = state()
     shutil.rmtree(application_directory)
 
     assert 'Waiting for another elodie' in waiting, waiting
-    assert unchanged_while_locked
+    assert while_locked == before, (before, while_locked)
     assert process.returncode == 0, output
     assert 'Success                        1' in output, output
+    assert after != before, after
+    if command == 'update':
+        assert after[1] == [os.path.join('2015-12-Dec', 'Trip', '2015-12-05_00-59-26-plain.jpg')], after
 
 @pytest.mark.skipif(helper.is_windows(), reason='The lock is tested with flock')
 def test_verify_does_not_wait_for_another_run():
@@ -2641,8 +2663,7 @@ def _hang_up_import(ignore_sighup):
         # nohup starts it with SIGHUP ignored
         preexec_fn=(lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN)) if ignore_sighup else None)
     try:
-        while process.stdout.readline().strip() != 'started':
-            pass
+        _wait_for_line(process.stdout, 'started')
         process.send_signal(signal.SIGHUP)
         output, _ = process.communicate(timeout=60)
     finally:
@@ -2670,3 +2691,46 @@ def test_import_with_nohup_continues_after_the_terminal_was_closed():
     assert returncode == 0, output
     assert 'Success                        3' in output, output
     assert len(set(hash_db.values())) == 3, hash_db
+
+@pytest.mark.skipif(helper.is_windows(), reason='SIGKILL is not available on Windows')
+def test_hard_kill_keeps_the_files_of_the_periodic_writes_in_the_hash_db():
+    # Nothing is written when elodie is killed (kill -9, power failure),
+    #  the files of the periodic writes of the run must be in the hash db
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    for name in ('a.jpg', 'b.jpg', 'c.jpg'):
+        with open(os.path.join(folder, name), 'wb') as f:
+            f.write(open(helper.get_file('plain.jpg'), 'rb').read() + name.encode())
+    application_directory = tempfile.mkdtemp()
+    # A write after each file: its checksum and the one of its copy
+    script = (
+        'import runpy, sys, time, elodie.filesystem as f, elodie.localstorage as l\n'
+        'l.WRITE_EVERY_CHANGES = 2\n'
+        'process_file = f.FileSystem.process_file\n'
+        'def blocking(self, _file, *a, **k):\n'
+        '    if _file.endswith("c.jpg"):\n'
+        '        print("started", flush=True)\n'
+        '        time.sleep(60)\n'
+        '    return process_file(self, _file, *a, **k)\n'
+        'f.FileSystem.process_file = blocking\n'
+        'sys.argv = sys.argv[1:]\n'
+        'runpy.run_path(sys.argv[0], run_name="__main__")\n'
+    )
+    process = subprocess.Popen(
+        [sys.executable, '-c', script, elodie_path, 'import', '--destination', folder_destination, folder],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.path.dirname(elodie_path),
+        env=dict(os.environ, ELODIE_APPLICATION_DIRECTORY=application_directory))
+    try:
+        _wait_for_line(process.stdout, 'started')
+        process.kill()
+        process.communicate(timeout=30)
+    finally:
+        process.kill()
+    with open(os.path.join(application_directory, 'hash.json')) as f:
+        content = f.read()
+    shutil.rmtree(application_directory)
+    hash_db = json.loads(content) if content.strip() else {}
+
+    assert process.returncode == -9, process.returncode
+    # a.jpg and b.jpg
+    assert len(set(hash_db.values())) == 2, hash_db

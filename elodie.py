@@ -466,15 +466,16 @@ def _generate_db(source, debug):
         
     db = Db.shared()
     db.backup_hash_db()
-    # Nothing is written until all files are read, an interrupted run keeps
-    #  the previous hash db
-    db.reset_hash_db()
 
+    # It replaces the hash db when all files were read, an interrupted run
+    #  keeps the previous one
+    hash_db = {}
     for current_file in FILESYSTEM.get_all_files(source):
         result.append((current_file, True))
-        db.add_hash(db.checksum(current_file), current_file)
+        hash_db[db.checksum(current_file)] = current_file
         log.progress()
-    
+
+    db.replace_hash_db(hash_db)
     db.update_hash_db()
     log.progress('', True)
     result.write()
@@ -800,9 +801,15 @@ def stop_on_sigterm():
     """Stop on SIGTERM like on Ctrl-C, i.e. on docker stop. Without a
     handler it is ignored when elodie is the first process of a container
     which is killed after a timeout then.
+
+    SIGHUP, i.e. when the terminal or SSH session of a long import is
+    closed, stops it the same way, so the databases are written. Without a
+    handler it killed elodie. With nohup it stays ignored.
     """
-    if hasattr(signal, 'SIGTERM'):
-        signal.signal(signal.SIGTERM, _terminate)
+    for name in ('SIGTERM', 'SIGHUP'):
+        signum = getattr(signal, name, None)
+        if signum is not None and signal.getsignal(signum) != signal.SIG_IGN:
+            signal.signal(signum, _terminate)
 
 
 @click.group()

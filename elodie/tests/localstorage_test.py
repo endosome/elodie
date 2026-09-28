@@ -588,3 +588,37 @@ def test_durable_write_syncs_the_directory():
     # The file, then its directory; a periodic write is not synced
     assert durable == [False, True], durable
     assert synced == durable, synced
+
+def test_changes_are_written_without_an_update():
+    # i.e. Ctrl+C after add_hash() of the first file of a run, before its
+    #  update: the file is in the library but was not in the hash db
+    db = Db()
+    db.add_hash('key', 'value')
+    db.add_location(1.0, 2.0, 'Somewhere')
+
+    db.flush()
+
+    assert _read_json(constants.hash_db()) == {'key': 'value'}
+    assert _read_json(constants.location_db()) == [{'lat': 1.0, 'long': 2.0, 'name': 'Somewhere'}]
+
+def test_replace_hash_db_is_written():
+    db = Db()
+    db.add_hash('old', 'value', True)
+
+    db.replace_hash_db({'new': 'value'})
+    db.flush()
+
+    assert _read_json(constants.hash_db()) == {'new': 'value'}
+
+@mock.patch('elodie.localstorage.WRITE_EVERY_CHANGES', 1000)
+@mock.patch('elodie.localstorage.WRITE_EVERY_SECONDS', 10)
+def test_periodic_write_does_not_depend_on_the_time_of_the_computer():
+    # The time of the computer can jump, i.e. when it is corrected
+    with mock.patch('elodie.localstorage.time.monotonic', return_value=1000.0):
+        db = Db()
+    db.add_hash('key', 'value')
+    with mock.patch('elodie.localstorage.time.time', return_value=0.0), \
+            mock.patch('elodie.localstorage.time.monotonic', return_value=1011.0):
+        db.update_hash_db(periodically=True)
+
+    assert _read_json(constants.hash_db()) == {'key': 'value'}

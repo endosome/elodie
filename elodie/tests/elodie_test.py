@@ -2594,3 +2594,79 @@ def test_import_reports_when_the_hash_db_cannot_be_written():
     assert not isinstance(result.exception, OSError), result.exception
     assert 'Could not write the database of elodie' in result.output, result.output
     assert 'Success                        1' in result.output, result.output
+
+def test_ctrl_c_before_the_first_update_keeps_the_file_in_the_hash_db():
+    # Interrupted after the first file was copied and added, before its
+    #  update: nothing was pending so nothing was written
+    from elodie.localstorage import Db
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'plain.jpg'))
+
+    with mock.patch.object(Db, 'update_hash_db', side_effect=KeyboardInterrupt):
+        result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, folder])
+    library = _library_files(folder_destination)
+    with open(Db().hash_db_path) as f:
+        hash_db = json.load(f)
+
+    assert result.exit_code == 1, result.output
+    assert len(library) == 1, library
+    assert set(hash_db.values()) == {os.path.join(folder_destination, library[0])}, hash_db
+
+def _hang_up_import(ignore_sighup):
+    import signal
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    for name in ('a.jpg', 'b.jpg', 'c.jpg'):
+        with open(os.path.join(folder, name), 'wb') as f:
+            f.write(open(helper.get_file('plain.jpg'), 'rb').read() + name.encode())
+    application_directory = tempfile.mkdtemp()
+    # c.jpg waits a few seconds after it was announced
+    script = (
+        'import runpy, sys, time, elodie.filesystem as f\n'
+        'process_file = f.FileSystem.process_file\n'
+        'def slow(self, _file, *a, **k):\n'
+        '    if _file.endswith("c.jpg"):\n'
+        '        print("started", flush=True)\n'
+        '        time.sleep(3)\n'
+        '    return process_file(self, _file, *a, **k)\n'
+        'f.FileSystem.process_file = slow\n'
+        'sys.argv = sys.argv[1:]\n'
+        'runpy.run_path(sys.argv[0], run_name="__main__")\n'
+    )
+    process = subprocess.Popen(
+        [sys.executable, '-c', script, elodie_path, 'import', '--destination', folder_destination, folder],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=os.path.dirname(elodie_path),
+        env=dict(os.environ, ELODIE_APPLICATION_DIRECTORY=application_directory),
+        # nohup starts it with SIGHUP ignored
+        preexec_fn=(lambda: signal.signal(signal.SIGHUP, signal.SIG_IGN)) if ignore_sighup else None)
+    try:
+        while process.stdout.readline().strip() != 'started':
+            pass
+        process.send_signal(signal.SIGHUP)
+        output, _ = process.communicate(timeout=60)
+    finally:
+        process.kill()
+    with open(os.path.join(application_directory, 'hash.json')) as f:
+        hash_db = json.load(f)
+    shutil.rmtree(application_directory)
+    return process.returncode, output, hash_db
+
+@pytest.mark.skipif(helper.is_windows(), reason='There is no SIGHUP on Windows')
+def test_closed_terminal_stops_an_import_and_keeps_the_hash_db():
+    # The terminal or SSH session of a long import was closed, SIGHUP killed
+    #  elodie before the hash db was written
+    returncode, output, hash_db = _hang_up_import(ignore_sighup=False)
+
+    assert returncode == 1, output
+    assert 'Aborted!' in output, output
+    # a.jpg and b.jpg
+    assert len(set(hash_db.values())) == 2, hash_db
+
+@pytest.mark.skipif(helper.is_windows(), reason='There is no SIGHUP on Windows')
+def test_import_with_nohup_continues_after_the_terminal_was_closed():
+    returncode, output, hash_db = _hang_up_import(ignore_sighup=True)
+
+    assert returncode == 0, output
+    assert 'Success                        3' in output, output
+    assert len(set(hash_db.values())) == 3, hash_db

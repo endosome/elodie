@@ -21,9 +21,10 @@ from elodie import constants
 from elodie import log
 
 
-#: The shared Db is written to disk after this many changes or seconds, and
-#:  at the end of a run. Writing hash.json for each file took seconds per file
-#:  with hundreds of thousands of files in the library.
+#: The shared Db is written to disk after this many changes (added hashes or
+#:  locations) or seconds, and at the end of a run. Writing hash.json for
+#:  each file took seconds per file with hundreds of thousands of files in
+#:  the library.
 WRITE_EVERY_CHANGES = 100
 WRITE_EVERY_SECONDS = 10
 
@@ -107,9 +108,13 @@ class Db(object):
 
         self.hash_db_path = constants.hash_db()
         self.location_db_path = constants.location_db()
-        # Changes which are not written yet, see update_hash_db()
+        # Changes which are not written yet. They are counted where the data
+        #  changes, not in update_hash_db(), so a change is also written at
+        #  the end of a run which was interrupted before its update.
         self.pending_changes = {'hash': 0, 'location': 0}
-        self.last_write = {'hash': time.time(), 'location': time.time()}
+        # A monotonic clock, the time of the computer can jump
+        self.last_write = {'hash': time.monotonic(),
+                           'location': time.monotonic()}
         # Written periodically, without fsync, since the last durable write
         self.written_not_durable = {'hash': False, 'location': False}
         # Checksums by path, see move_hashes()
@@ -192,7 +197,7 @@ class Db(object):
         """Write the databases with changes to disk, durably."""
         for name in ('hash', 'location'):
             if self.pending_changes[name] or self.written_not_durable[name]:
-                self._update(name, periodically=False, change=False)
+                self._update(name, periodically=False)
 
     @staticmethod
     def _load(path, empty):
@@ -258,6 +263,7 @@ class Db(object):
         :param bool write: If true, write the hash db to disk.
         """
         self.hash_db[key] = value
+        self.pending_changes['hash'] += 1
         if self.paths is not None:
             self.paths.setdefault(os.path.abspath(value), set()).add(key)
         if(write is True):
@@ -301,6 +307,7 @@ class Db(object):
         data['long'] = longitude
         data['name'] = place
         self.location_db.append(data)
+        self.pending_changes['location'] += 1
         if(write is True):
             self.update_location_db()
 
@@ -402,8 +409,16 @@ class Db(object):
             yield (checksum, path)
 
     def reset_hash_db(self):
-        self.hash_db = {}
+        self.replace_hash_db({})
+
+    def replace_hash_db(self, hash_db):
+        """Replace all hashes, i.e. by the ones of generate-db.
+
+        :param dict hash_db: Paths by checksum.
+        """
+        self.hash_db = hash_db
         self.paths = None
+        self.pending_changes['hash'] += 1
 
     def update_hash_db(self, periodically=False):
         """Write the hash db to disk.
@@ -420,9 +435,7 @@ class Db(object):
         """
         self._update('location', periodically)
 
-    def _update(self, name, periodically, change=True):
-        if change:
-            self.pending_changes[name] += 1
+    def _update(self, name, periodically):
         if constants.dry_run:
             # What would be written is reported once, at the end of a run
             if not periodically and self.pending_changes[name]:
@@ -434,7 +447,8 @@ class Db(object):
 
         if (periodically and
                 self.pending_changes[name] < WRITE_EVERY_CHANGES and
-                time.time() - self.last_write[name] < WRITE_EVERY_SECONDS):
+                time.monotonic() - self.last_write[name] <
+                WRITE_EVERY_SECONDS):
             return
 
         # The periodic writes are atomic, only the last one of a run (see
@@ -446,7 +460,7 @@ class Db(object):
         else:
             self._write(self.location_db_path, self.location_db, durable)
         self.pending_changes[name] = 0
-        self.last_write[name] = time.time()
+        self.last_write[name] = time.monotonic()
         self.written_not_durable[name] = not durable
 
 

@@ -20,6 +20,8 @@ dist
 docs/_build
 # Test assets are downloaded by the tests, see elodie/tests/assets.json
 elodie/tests/files/raw-*
+elodie/tests/files/live-photo-*
+elodie/tests/files/motion-photo-*
 **/*.download
 Dockerfile
 .dockerignore

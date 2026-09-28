@@ -61,7 +61,10 @@ jobs:
         # Camera raw files downloaded by the tests from elodie-test-assets
         uses: actions/cache@v6
         with:
-          path: elodie/tests/files/raw-*
+          path: |
+            elodie/tests/files/raw-*
+            elodie/tests/files/live-photo-*
+            elodie/tests/files/motion-photo-*
           key: test-assets-${{ hashFiles('elodie/tests/assets.json') }}
 
       - name: Enable debug output

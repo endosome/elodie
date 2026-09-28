@@ -16,3 +16,5 @@ env/**
 .venv/**
 # Test assets downloaded from elodie-test-assets, see elodie/tests/assets.json
 elodie/tests/files/raw-*
+elodie/tests/files/live-photo-*
+elodie/tests/files/motion-photo-*

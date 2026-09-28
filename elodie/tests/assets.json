@@ -1,6 +1,6 @@
 {
   "_comment": "Test files published as releases of https://github.com/endosome/elodie-test-assets. See helper.get_asset().",
-  "version": "v2",
+  "version": "v3",
   "url": "https://github.com/endosome/elodie-test-assets/releases/download/{version}/{name}",
   "assets": [
     {
@@ -128,6 +128,76 @@
       "size": 6422144,
       "camera": "Minolta DiMAGE 5",
       "date_time_original": "2025:01:04 10:23:44"
+    },
+    {
+      "name": "live-photo-apple-iphone-15.heic",
+      "sha256": "7db0c63e7e04fcff26b9af6a4f039f8a35cb58fe288d99b147448e5862c06e73",
+      "size": 5120446,
+      "camera": "Apple iPhone 15",
+      "date_time_original": "2024:09:06 18:08:07"
+    },
+    {
+      "name": "live-photo-apple-iphone-15.mov",
+      "sha256": "7602b94a3de6f0aa1723c940145c57a426616aae3afcea4df4cccb025375df9e",
+      "size": 3922900,
+      "camera": "Apple iPhone 15",
+      "date_time_original": "2024:09:06 18:08:07"
+    },
+    {
+      "name": "motion-photo-google-pixel-9-pro-xl-ultra-hdr.jpg",
+      "sha256": "ac0d8ac4560aa2137316678058c6723aa8a72d009475f0aa1fff87cb7dd8a4e7",
+      "size": 4776912,
+      "camera": "Google Pixel 9 Pro XL",
+      "date_time_original": "2024:09:19 16:40:34"
+    },
+    {
+      "name": "motion-photo-samsung-galaxy-a34-mpv2.jpg",
+      "sha256": "8b4de80def81867630fe0f28c3051053ff0b76b7249f91b9d515a2e67ba04a8a",
+      "size": 7630687,
+      "camera": "Samsung Galaxy A34 5G",
+      "date_time_original": "2024:10:23 09:09:47"
+    },
+    {
+      "name": "motion-photo-samsung-galaxy-s20-versionless.heic",
+      "sha256": "f2dbe60e0402479f3c0d4246f30756fc73a416cdd9c64509c9767b070e22660e",
+      "size": 5755343,
+      "camera": "Samsung SM-G981U1",
+      "date_time_original": "2020:10:27 08:15:50"
+    },
+    {
+      "name": "motion-photo-samsung-galaxy-s20fe-mpv2.heif",
+      "sha256": "3b9da515a1ddf66910397c7f9165e254b8022fc82b0d0436bfc91952c26e7baf",
+      "size": 3366300,
+      "camera": "Samsung SM-G781B",
+      "date_time_original": "2022:04:23 08:59:35"
+    },
+    {
+      "name": "motion-photo-samsung-galaxy-s20fe-mpv2.jpg",
+      "sha256": "8676244eb21226043f4af46336e028e537a4f64895600c178efc5592dd2b547e",
+      "size": 5417157,
+      "camera": "Samsung SM-G780F",
+      "date_time_original": "2024:10:23 12:10:57"
+    },
+    {
+      "name": "motion-photo-samsung-galaxy-s23-ultra-mpv3.heic",
+      "sha256": "0f6afcca1755df94834b9ec93b0622b2eb027d17b1a981b232603a63b4ffb2cb",
+      "size": 5339603,
+      "camera": "Samsung Galaxy S23 Ultra",
+      "date_time_original": "2024:10:07 19:05:13"
+    },
+    {
+      "name": "motion-photo-samsung-galaxy-tab-s9-mpv3.heic",
+      "sha256": "23e9f77624a870e2f70c31b68b6986893345fd805eb319bfe26114fbe4e461b3",
+      "size": 7432675,
+      "camera": "Samsung Galaxy Tab S9 5G",
+      "date_time_original": "2024:10:23 12:11:49"
+    },
+    {
+      "name": "motion-photo-samsung-galaxy-tab-s9-mpv3.jpg",
+      "sha256": "3304d46313fbb39ab002ac04882e1198b5f148f5028abf58e938d5c0b5413cb1",
+      "size": 7657252,
+      "camera": "Samsung Galaxy Tab S9 5G",
+      "date_time_original": "2024:10:23 12:35:28"
     }
   ]
 }

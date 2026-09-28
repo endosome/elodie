@@ -826,7 +826,7 @@ def test_import_summary_invalid_file_is_error_not_duplicate():
     assert 'Error                          1' in result_second.output, result_second.output
     assert 'Duplicate, not imported        1' in result_second.output, result_second.output
 
-@pytest.mark.parametrize('name', [asset['name'] for asset in helper.ASSETS['assets']])
+@pytest.mark.parametrize('name', [asset['name'] for asset in helper.ASSETS['assets'] if asset['name'].startswith('raw-')])
 def test_import_raw_file(name):
     # gh-507: includes raw files of new cameras which image libraries cannot read
     file_path = helper.get_asset(name)
@@ -2739,3 +2739,83 @@ def test_hard_kill_keeps_the_files_of_the_periodic_writes_in_the_hash_db():
     assert process.returncode == -9, process.returncode
     # a.jpg and b.jpg
     assert len(set(hash_db.values())) == 2, hash_db
+
+
+# Motion Photos of Google and Samsung contain a video, Ultra HDR photos and the
+#  photos of an iPhone a gain map. Writing metadata must keep them.
+MOTION_PHOTO_PARTS = {
+    'motion-photo-google-pixel-9-pro-xl-ultra-hdr.jpg': ['MotionPhotoVideo', 'MPImage2', 'DirectoryItemLength'],
+    'motion-photo-samsung-galaxy-a34-mpv2.jpg': ['MotionPhotoVideo', 'EmbeddedVideoFile', 'DirectoryItemLength'],
+    'motion-photo-samsung-galaxy-s20-versionless.heic': ['EmbeddedVideoFile'],
+    'motion-photo-samsung-galaxy-s20fe-mpv2.heif': ['MotionPhotoVideo', 'DirectoryItemLength'],
+    'motion-photo-samsung-galaxy-s20fe-mpv2.jpg': ['MotionPhotoVideo', 'EmbeddedVideoFile', 'DirectoryItemLength'],
+    'motion-photo-samsung-galaxy-s23-ultra-mpv3.heic': ['MotionPhotoVideo', 'DirectoryItemLength'],
+    'motion-photo-samsung-galaxy-tab-s9-mpv3.heic': ['MotionPhotoVideo', 'DirectoryItemLength'],
+    'motion-photo-samsung-galaxy-tab-s9-mpv3.jpg': ['MotionPhotoVideo', 'EmbeddedVideoFile', 'DirectoryItemLength'],
+    'live-photo-apple-iphone-15.heic': ['AuxiliaryImageType'],
+}
+
+def _embedded_parts(path):
+    """The parts of a file which writing metadata must keep: its embedded
+    video, gain map, image data and the lengths by which they are found.
+    ExifTool is called directly for the exact bytes."""
+    import hashlib
+    from elodie.dependencies import get_exiftool
+    parts = {}
+    for tag in ('MotionPhotoVideo', 'EmbeddedVideoFile', 'MPImage2'):
+        data = subprocess.run([get_exiftool(), '-b', '-' + tag, path], capture_output=True).stdout
+        if data:
+            parts[tag] = '%d bytes, sha256 %s' % (len(data), hashlib.sha256(data).hexdigest())
+    info = json.loads(subprocess.run(
+        [get_exiftool(), '-j', '-G1', '-api', 'ImageHashType=SHA256', '-ImageDataHash',
+         '-XMP-GContainer:DirectoryItemLength', '-AuxiliaryImageType', path], capture_output=True).stdout)[0]
+    for key, value in info.items():
+        if key != 'SourceFile':
+            parts[key.split(':')[-1]] = value
+    return parts
+
+@pytest.mark.parametrize('name', sorted(MOTION_PHOTO_PARTS))
+@mock.patch.object(elodie.geolocation, 'coordinates_by_name', return_value={'latitude': 52.2297, 'longitude': 21.0122})
+def test_writing_metadata_keeps_the_video_and_gain_map_of_a_photo(mock_coordinates, name):
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    origin = os.path.join(folder, name)
+    shutil.copyfile(helper.get_asset(name), origin)
+    before = _embedded_parts(origin)
+
+    # The original name is written on import
+    dest_path = elodie.import_file(origin, folder_destination, False, False, False)
+    after_import = _embedded_parts(dest_path)
+    result = CliRunner().invoke(elodie._update, ['--album', 'Trip', '--title', 'Beach', '--time', '2020-06-01 12:00:00',
+                                                 '--location', 'Warsaw', dest_path])
+    library = _library_files(folder_destination)
+    updated = os.path.join(folder_destination, library[0]) if len(library) == 1 else None
+    after_update = _embedded_parts(updated) if updated else None
+
+    for part in MOTION_PHOTO_PARTS[name] + ['ImageDataHash']:
+        assert part in before, (part, before)
+    assert after_import == before, after_import
+    assert result.exit_code == 0, result.output
+    assert Photo(updated).get_album() == 'Trip', library
+    assert after_update == before, after_update
+
+def test_import_and_update_an_apple_live_photo_of_an_iphone():
+    # gh-474: a real pair, the video begins before the photo
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_asset('live-photo-apple-iphone-15.heic'), os.path.join(folder, 'IMG_4821.HEIC'))
+    shutil.copyfile(helper.get_asset('live-photo-apple-iphone-15.mov'), os.path.join(folder, 'IMG_4821.MOV'))
+
+    imported = CliRunner().invoke(elodie._import, ['--destination', folder_destination, folder])
+    library = _library_files(folder_destination)
+    photo = os.path.join(folder_destination, [f for f in library if f.endswith('.heic')][0])
+    updated = CliRunner().invoke(elodie._update, ['--album', 'Sardinia', photo])
+    library_after_update = _library_files(folder_destination)
+
+    assert imported.exit_code == 0, imported.output
+    assert 'Success                        2' in imported.output, imported.output
+    assert [os.path.splitext(f)[1] for f in library] == ['.heic', '.mov'], library
+    assert os.path.splitext(library[0])[0] == os.path.splitext(library[1])[0], library
+    assert os.path.basename(library[0]).startswith('2024-09-06_18-08-07-img_4821'), library
+    assert updated.exit_code == 0, updated.output
+    assert [os.path.dirname(f).split(os.sep)[-1] for f in library_after_update] == ['Sardinia', 'Sardinia'], library_after_update

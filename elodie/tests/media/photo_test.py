@@ -387,6 +387,8 @@ PHOTO_TYPE_FILES = [
     ('photo.avif', (2020, 6, 15, 10, 30, 0, 0, 167, 0)),
 ] + [
     (asset['name'], None) for asset in helper.ASSETS['assets']
+    # Not the video of a Live Photo
+    if os.path.splitext(asset['name'])[1][1:].lower() in Photo.extensions
 ]
 
 def _get_photo_type_file(file_name, date):

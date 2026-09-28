@@ -270,6 +270,10 @@ synology_folders=@eaDir
 thumbnails=.thumbnails
 ```
 
+### Files copied by a Mac
+
+On USB drives, SD cards and network shares macOS writes a file named `._<name>` next to each file, i.e. `._IMG_1234.JPG`. It only contains metadata of the file system. Elodie ignores these files when it imports a folder, and with `--trash` it moves them to the trash together with their file.
+
 ### Sidecar files
 
 Edits saved by other apps in sidecar files next to a photo, like `.xmp` files from Lightroom or darktable and `.AAE` files from Apple devices, are imported together with the photo. A sidecar belongs to a photo when it is in the same folder and has the same name, ignoring case, either without the photo's extension (`IMG_1234.xmp`) or with it (`IMG_1234.CR3.xmp`). It is renamed to follow the photo's new name, and a sidecar shared by a RAW+JPEG pair is copied next to both.

@@ -2374,7 +2374,8 @@ def test_import_live_photo_with_apple_double_files(mock_send2trash):
     assert 'Success                        2' in result.output, result.output
     assert 'Error                          0' in result.output, result.output
     assert [os.path.splitext(f)[1] for f in library] == ['.heic', '.mov'], library
-    assert sorted(trashed) == ['IMG_1234.HEIC', 'IMG_1234.MOV'], trashed
+    # With their AppleDouble files, they stayed behind
+    assert sorted(trashed) == ['._IMG_1234.HEIC', '._IMG_1234.MOV', 'IMG_1234.HEIC', 'IMG_1234.MOV'], trashed
 
 def test_import_apple_double_file_given_explicitly():
     temporary_folder, folder = helper.create_working_folder()
@@ -2866,3 +2867,57 @@ def test_update_video_with_the_name_of_another_photo():
     assert 'Success                        1' in result.output, result.output
     assert os.path.join('2019-05-May', 'Unknown Location', '2019-05-26_10-33-20-img_1234.heic') in files, files
     assert any(f.startswith(os.path.join('2019-05-May', 'Holidays')) and f.endswith('.mov') for f in files), files
+
+@mock.patch.object(elodie, 'send2trash')
+def test_import_send_to_trash_with_the_apple_double_file(mock_send2trash):
+    # macOS wrote ._<name> next to the file on a USB drive
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'plain.jpg'))
+    helper.create_apple_double(os.path.join(folder, '._plain.jpg'))
+    shutil.copyfile(helper.get_file('with-title.jpg'), os.path.join(folder, 'with-title.jpg'))
+    # Not an AppleDouble file although it has the name of one
+    with open(os.path.join(folder, '._with-title.jpg'), 'w') as f:
+        f.write('notes')
+    shutil.copyfile(helper.get_file('invalid.jpg'), os.path.join(folder, 'invalid.jpg'))
+    helper.create_apple_double(os.path.join(folder, '._invalid.jpg'))
+    trashed = []
+    mock_send2trash.side_effect = lambda path: trashed.append(os.path.basename(path))
+
+    CliRunner().invoke(elodie._import, ['--destination', folder_destination, '--trash', folder])
+
+    # invalid.jpg was not imported, its AppleDouble file stays with it
+    assert sorted(trashed) == ['._plain.jpg', 'plain.jpg', 'with-title.jpg'], trashed
+
+@mock.patch('elodie.constants.dry_run', False)
+def test_import_send_to_trash_with_the_apple_double_file_dry_run():
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'plain.jpg'))
+    helper.create_apple_double(os.path.join(folder, '._plain.jpg'))
+
+    result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, '--trash', '--dry-run', folder])
+
+    assert '[DRY-RUN] Would move to trash: %s' % os.path.join(folder, '._plain.jpg') in result.output, result.output
+    assert sorted(os.listdir(folder)) == ['._plain.jpg', 'plain.jpg']
+
+def test_import_and_update_a_live_photo_with_a_jpeg():
+    # Older iPhones or with the setting Most Compatible store the photo of a
+    #  Live Photo as JPEG
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    photo, video = helper.create_live_photo(folder, photo_extension='JPG', jpeg=True)
+    _set_video_date(video, '2018:01:01 12:00:00+02:00')
+
+    imported = CliRunner().invoke(elodie._import, ['--destination', folder_destination, folder])
+    library = _files_in(folder_destination)
+    video_dest = os.path.join(folder_destination, [f for f in library if f.endswith('.mov')][0])
+    updated = CliRunner().invoke(elodie._update, ['--album', 'Holidays', video_dest])
+    library_after_update = _files_in(folder_destination)
+
+    assert imported.exit_code == 0, imported.output
+    assert 'Success                        2' in imported.output, imported.output
+    assert [os.path.splitext(f)[1] for f in library] == ['.jpg', '.mov'], library
+    assert os.path.splitext(library[0])[0] == os.path.splitext(library[1])[0], library
+    assert updated.exit_code == 0, updated.output
+    assert all(os.sep + 'Holidays' + os.sep in f for f in library_after_update), library_after_update

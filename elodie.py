@@ -24,7 +24,7 @@ from elodie.compatability import _decode
 from elodie.config import load_config
 from elodie.filesystem import FileSystem
 from elodie.localstorage import Db
-from elodie.media.base import Base, get_all_subclasses
+from elodie.media.base import Base, get_all_subclasses, is_apple_double
 from elodie.media.media import Media
 from elodie.media.text import Text
 from elodie.media.audio import Audio
@@ -147,12 +147,8 @@ def move_to_trash(_file, dest_path, imported_sidecars):
     #  imported now or it had been imported before (a duplicate).
     if not dest_path and not is_imported(_file):
         log.warn('Not moving %s to trash, it was not imported' % _file)
-    elif constants.dry_run:
-        print(f"[DRY-RUN] Would move to trash: {_file}")
     else:
-        modified = FILESYSTEM.get_directory_modified(_file)
-        send2trash(_file)
-        FILESYSTEM.update_directory_listing(_file, False, modified)
+        send_to_trash(_file)
 
     # Sidecars which were imported with the file follow it to the trash
     #  unless another file still uses them (i.e. IMG_1234.JPG and
@@ -161,12 +157,26 @@ def move_to_trash(_file, dest_path, imported_sidecars):
         if (not os.path.exists(sidecar) or
                 FILESYSTEM.is_sidecar_shared(sidecar, _file)):
             continue
+        send_to_trash(sidecar)
+
+
+def send_to_trash(path):
+    """Move a file to the trash with the AppleDouble file which macOS wrote
+    next to it on a USB drive or network share, ._IMG_1234.MOV for
+    IMG_1234.MOV. It only contains metadata of the file, it stayed behind.
+    """
+    directory, name = os.path.split(path)
+    apple_double = os.path.join(directory, '._' + name)
+    trashed_files = [path]
+    if is_apple_double(apple_double):
+        trashed_files.append(apple_double)
+    for trashed in trashed_files:
         if constants.dry_run:
-            print(f"[DRY-RUN] Would move to trash: {sidecar}")
+            print(f"[DRY-RUN] Would move to trash: {trashed}")
         else:
-            modified = FILESYSTEM.get_directory_modified(sidecar)
-            send2trash(sidecar)
-            FILESYSTEM.update_directory_listing(sidecar, False, modified)
+            modified = FILESYSTEM.get_directory_modified(trashed)
+            send2trash(trashed)
+            FILESYSTEM.update_directory_listing(trashed, False, modified)
 
 
 def import_live_photo_video(video, photo, photo_dest_path,

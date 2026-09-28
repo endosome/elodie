@@ -133,17 +133,27 @@ LIVE_PHOTO_CONTENT_IDENTIFIER = '76C3E45A-2CCC-498B-9C1A-29C3ADD99D39'
 
 def create_live_photo(folder, name='IMG_1234', photo_extension='HEIC',
                       video_extension='MOV',
-                      content_identifier=LIVE_PHOTO_CONTENT_IDENTIFIER):
+                      content_identifier=LIVE_PHOTO_CONTENT_IDENTIFIER,
+                      jpeg=False):
     """Create an Apple Live Photo: photo.heic, which has a ContentIdentifier
     in its maker notes, and video.mov with the same identifier and the local
     time and UTC time of the photo like an iPhone writes them. gh-474
 
+    :param bool jpeg: The photo is a JPEG like of older iPhones or with the
+        setting Most Compatible: plain.jpg with the maker notes of photo.heic,
+        which is of an iPhone 8.
     :returns: tuple of the paths of the photo and the video
     """
     photo = os.path.join(folder, '%s.%s' % (name, photo_extension))
     video = os.path.join(folder, '%s.%s' % (name, video_extension))
-    with open(get_file('photo.heic'), 'rb') as source, open(photo, 'wb') as f:
+    source_photo = 'plain.jpg' if jpeg else 'photo.heic'
+    with open(get_file(source_photo), 'rb') as source, open(photo, 'wb') as f:
         f.write(source.read())
+    if jpeg:
+        ExifTool().execute(
+            b'-overwrite_original',
+            b'-tagsFromFile', get_file('photo.heic').encode(),
+            b'-Make', b'-Model', b'-MakerNotes', photo.encode())
     with open(get_file('video.mov'), 'rb') as source, open(video, 'wb') as f:
         f.write(source.read())
     ExifTool().execute(

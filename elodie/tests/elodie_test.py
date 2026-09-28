@@ -6,7 +6,6 @@ import os
 import sys
 import shutil
 import subprocess
-import tempfile
 import time
 
 from click.testing import CliRunner
@@ -2451,7 +2450,8 @@ def test_ctrl_c_keeps_the_files_imported_before_in_the_hash_db():
     for name in ('a.jpg', 'b.jpg', 'c.jpg'):
         with open(os.path.join(folder, name), 'wb') as f:
             f.write(open(helper.get_file('plain.jpg'), 'rb').read() + name.encode())
-    application_directory = tempfile.mkdtemp()
+    # Removed after the test also when it fails
+    application_directory = helper.create_working_folder()[1]
     script = (
         'import runpy, sys, time, elodie.filesystem as f\n'
         'process_file = f.FileSystem.process_file\n'
@@ -2502,7 +2502,8 @@ def test_imports_at_the_same_time_keep_all_files_in_the_hash_db():
     #  last one replaced the files of the other
     temporary_folder, folder = helper.create_working_folder()
     temporary_folder_destination, folder_destination = helper.create_working_folder()
-    application_directory = tempfile.mkdtemp()
+    # Removed after the test also when it fails
+    application_directory = helper.create_working_folder()[1]
     photo = open(helper.get_file('plain.jpg'), 'rb').read()
     for source in ('a', 'b'):
         os.makedirs(os.path.join(folder, source))
@@ -2532,7 +2533,8 @@ def test_commands_which_change_the_databases_wait_for_another_run(command):
     if command == 'update':
         os.makedirs(os.path.dirname(library_file))
         shutil.move(os.path.join(folder, 'plain.jpg'), library_file)
-    application_directory = tempfile.mkdtemp()
+    # Removed after the test also when it fails
+    application_directory = helper.create_working_folder()[1]
     args = {
         'import': ['import', '--destination', folder_destination, folder],
         'update': ['update', '--album', 'Trip', library_file],
@@ -2565,7 +2567,8 @@ def test_commands_which_change_the_databases_wait_for_another_run(command):
 def test_verify_does_not_wait_for_another_run():
     # It only reads the hash db
     from elodie.localstorage import Db
-    application_directory = tempfile.mkdtemp()
+    # Removed after the test also when it fails
+    application_directory = helper.create_working_folder()[1]
 
     with mock.patch.dict(os.environ, {'ELODIE_APPLICATION_DIRECTORY': application_directory}):
         with Db.lock():
@@ -2642,7 +2645,8 @@ def _hang_up_import(ignore_sighup):
     for name in ('a.jpg', 'b.jpg', 'c.jpg'):
         with open(os.path.join(folder, name), 'wb') as f:
             f.write(open(helper.get_file('plain.jpg'), 'rb').read() + name.encode())
-    application_directory = tempfile.mkdtemp()
+    # Removed after the test also when it fails
+    application_directory = helper.create_working_folder()[1]
     # c.jpg waits a few seconds after it was announced
     script = (
         'import runpy, sys, time, elodie.filesystem as f\n'
@@ -2701,7 +2705,8 @@ def test_hard_kill_keeps_the_files_of_the_periodic_writes_in_the_hash_db():
     for name in ('a.jpg', 'b.jpg', 'c.jpg'):
         with open(os.path.join(folder, name), 'wb') as f:
             f.write(open(helper.get_file('plain.jpg'), 'rb').read() + name.encode())
-    application_directory = tempfile.mkdtemp()
+    # Removed after the test also when it fails
+    application_directory = helper.create_working_folder()[1]
     # A write after each file: its checksum and the one of its copy
     script = (
         'import runpy, sys, time, elodie.filesystem as f, elodie.localstorage as l\n'

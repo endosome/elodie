@@ -149,3 +149,36 @@ def test_execute_after_exiftool_was_killed():
         exiftool.terminate()
 
     assert version.strip().startswith(b'13.'), version
+
+@pytest.mark.skipif(not sys.platform.startswith('linux'), reason='Only Linux can end a process with its parent')
+def test_exiftool_exits_when_elodie_is_killed():
+    # With -stay_open ExifTool does not exit at the end of its input, it
+    #  kept running after kill -9 and checked its input 100 times a second
+    import signal
+    import subprocess
+    import time
+    code = ('import sys, time; sys.path.insert(0, {root!r})\n'
+            'from elodie.external.pyexiftool import ExifTool\n'
+            'from elodie.dependencies import get_exiftool\n'
+            'exiftool = ExifTool(executable_=get_exiftool())\n'
+            'exiftool.start()\n'
+            'print(exiftool._process.pid, flush=True)\n'
+            'time.sleep(60)\n').format(
+                root=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    elodie = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, text=True)
+    pid = int(elodie.stdout.readline())
+
+    elodie.kill()
+    elodie.wait()
+    running = True
+    for i in range(100):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            running = False
+            break
+        time.sleep(0.1)
+    if running:
+        os.kill(pid, signal.SIGKILL)
+
+    assert not running, 'ExifTool still runs 10 s after elodie was killed'

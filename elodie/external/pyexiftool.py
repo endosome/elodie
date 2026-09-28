@@ -162,6 +162,23 @@ def format_error (result):
         else:
             return 'exiftool finished with error: "%s"' % strip_nl(result) 
 
+def _exit_with_parent():
+    """Run in the exiftool process before it starts, on Linux: it is sent
+    SIGINT when elodie exits, also when it is killed (kill -9, out of
+    memory). With -stay_open it does not exit at the end of its input, it
+    kept running and checked the input 100 times a second. SIGINT lets it
+    remove its temporary files like on Ctrl+C.
+    """
+    import ctypes
+    import signal
+    PR_SET_PDEATHSIG = 1
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.prctl(PR_SET_PDEATHSIG, signal.SIGINT)
+    except (AttributeError, OSError):
+        pass
+
+
 class ExifToolError(Exception):
     """ExifTool exited while it ran a command."""
 
@@ -259,7 +276,9 @@ class ExifTool(object, metaclass=Singleton):
             self._process = subprocess.Popen(
                 procargs,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=devnull)
+                stderr=devnull,
+                preexec_fn=(_exit_with_parent
+                            if sys.platform.startswith('linux') else None))
         self.running = True
 
     def terminate(self):

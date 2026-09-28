@@ -296,7 +296,7 @@ A Live Photo is a photo and a short video, i.e. `IMG_1234.HEIC` and `IMG_1234.MO
 
 * `update` changes the photo and the video together, also when only one of them is given.
 * With `--trash` the photo and the video are only moved to the trash when both are in the library.
-* When the photo was imported before, the video goes next to it in your library.
+* When the photo was imported before, the video goes next to it in your library. Also when the video is imported later on its own, i.e. the photos were imported first without the videos.
 * When the photo can't be imported, the video stays with it in the source and both are reported as errors, so they are imported together the next time.
 * When the photo isn't imported at all (i.e. it is excluded), the video is imported on its own.
 

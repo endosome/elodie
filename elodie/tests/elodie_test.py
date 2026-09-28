@@ -2921,3 +2921,50 @@ def test_import_and_update_a_live_photo_with_a_jpeg():
     assert os.path.splitext(library[0])[0] == os.path.splitext(library[1])[0], library
     assert updated.exit_code == 0, updated.output
     assert all(os.sep + 'Holidays' + os.sep in f for f in library_after_update), library_after_update
+
+def _import_photo_before(folder_destination, photo):
+    # The photo was imported before without its video, from another folder
+    #  (the pairing of the Live Photo imports the video next to it too)
+    photos_folder = helper.create_working_folder()[1]
+    shutil.copyfile(photo, os.path.join(photos_folder, os.path.basename(photo)))
+    CliRunner().invoke(elodie._import, ['--destination', folder_destination, photos_folder])
+
+@pytest.mark.parametrize('how', ['folder', 'file'])
+def test_import_live_photo_video_later_on_its_own(how):
+    # Only the video of a Live Photo whose photo was imported before: it was
+    #  named and filed by its own date, the pair was split
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    photo, video = helper.create_live_photo(folder)
+    _set_video_date(video, '2018:01:01 12:00:00+02:00')
+    _import_photo_before(folder_destination, photo)
+
+    if how == 'folder':
+        # i.e. the photos are excluded
+        result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, '--exclude-regex', r'\.HEIC$', folder])
+    else:
+        result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, video])
+    library = _files_in(folder_destination)
+
+    assert result.exit_code == 0, result.output
+    assert 'Success                        1' in result.output, result.output
+    assert [os.path.splitext(f)[1] for f in library] == ['.heic', '.mov'], library
+    assert os.path.splitext(library[0])[0] == os.path.splitext(library[1])[0], library
+
+def test_import_live_photo_video_on_its_own_when_its_photo_was_not_imported():
+    # The photo next to it was changed since the one in the library was
+    #  imported: it is not in the library, the video is imported by its own
+    #  date as when there is no photo
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    photo, video = helper.create_live_photo(folder)
+    _set_video_date(video, '2018:01:01 12:00:00+02:00')
+    _import_photo_before(folder_destination, photo)
+    ExifTool().execute(b'-overwrite_original', b'-XMP:Title=Changed', photo.encode())
+
+    result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, video])
+    library = _files_in(folder_destination)
+
+    assert result.exit_code == 0, result.output
+    videos = [f for f in library if f.endswith('.mov')]
+    assert len(videos) == 1 and os.path.basename(videos[0]).startswith('2018-01-01'), library

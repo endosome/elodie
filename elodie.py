@@ -102,6 +102,8 @@ def import_file(_file, destination, album_from_folder, trash,
     live_photo_video = None
     if dest_path is None:
         live_photo_video = FILESYSTEM.find_live_photo_video(_file, media)
+        if live_photo_video is None:
+            dest_path = get_live_photo_video_dest_path(_file)
 
     dest_path = FILESYSTEM.process_file(
         _file, destination, media, allowDuplicate=allow_duplicates,
@@ -228,6 +230,24 @@ def import_live_photo_video(video, photo, photo_dest_path,
             status = False
     record_live_photo_video(video, status)
     return (video, status, video_dest_path, sidecars)
+
+
+def get_live_photo_video_dest_path(video):
+    """The path in the library of the video of a Live Photo which is
+    imported on its own, i.e. when only the video is given or the photos
+    were imported before without the videos: next to its photo if the photo
+    was imported before. gh-474
+
+    :returns: str or None, i.e. when it is not the video of a Live Photo or
+        its photo was not imported
+    """
+    photo = FILESYSTEM.find_live_photo_photo(video)
+    if photo is None:
+        return None
+    photo_dest_path = get_imported_path(photo)
+    if photo_dest_path is None:
+        return None
+    return FILESYSTEM.get_live_photo_video_path(photo_dest_path, video)
 
 
 def record_live_photo_video(video, status):

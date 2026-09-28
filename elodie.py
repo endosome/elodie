@@ -370,6 +370,7 @@ def is_imported(_file):
               help='Show more verbose debug output.')
 @click.option('--dry-run', default=False, is_flag=True,
               help='Show what would be done without making any changes.')
+@with_database_lock
 def _batch(debug, dry_run):
     """Run batch() for all plugins.
     """

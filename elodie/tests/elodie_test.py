@@ -3045,3 +3045,19 @@ def test_import_video_with_location_and_time_has_the_time_zone_of_the_location(m
     assert result.exit_code == 0, result.output
     assert tags['QuickTime:CreationDate'] == '2020:06:01 12:00:00+02:00', tags
     assert tags['QuickTime:CreateDate'] == '2020:06:01 10:00:00', tags
+
+@pytest.mark.skipif(helper.is_windows(), reason='The lock is tested with flock')
+def test_batch_waits_for_another_run():
+    # Plugins change the databases, i.e. the Immich plugin moves files to
+    #  the album folders
+    from elodie.localstorage import Db
+    application_directory = helper.create_working_folder()[1]
+
+    with mock.patch.dict(os.environ, {'ELODIE_APPLICATION_DIRECTORY': application_directory}):
+        with Db.lock():
+            process = _run_elodie(['batch'], application_directory)
+            waiting = process.stderr.readline()
+    output, errors = process.communicate(timeout=60)
+
+    assert 'Waiting for another elodie' in waiting, waiting
+    assert process.returncode == 0, (output, errors)

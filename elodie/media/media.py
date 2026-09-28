@@ -80,6 +80,11 @@ class Media(Base):
         :returns: float or None if not present in EXIF or a non-photo file
         """
 
+        if self.batched_position is not None:
+            # Set but not written yet, i.e. its time zone is the one of the
+            #  date taken of a video written with it
+            return self.batched_position[0 if type == 'latitude' else 1]
+
         exif = self.get_exiftool_attributes()
         if not exif:
             return None
@@ -227,9 +232,44 @@ class Media(Base):
 
         return str(exiftool_attributes[self.title_key])
 
+    def for_copy(self, file_path):
+        """A media object for a copy of this file which was not changed
+        since it was copied. It has the metadata of this file, reading it
+        again was an ExifTool call for each imported file.
+
+        :param str file_path: Path of the copy.
+        """
+        copy = super(Media, self).for_copy(file_path)
+        copy.exif_metadata = self.exif_metadata
+        return copy
+
+    def batch_writes(self):
+        """Collect the tags of the setters and write them in one ExifTool
+        call with write_batched(). ExifTool rewrites the whole file for each
+        write, which takes long for large videos.
+        """
+        self.batched_tags = {}
+
+    def write_batched(self):
+        """Write the tags collected since batch_writes().
+
+        :returns: bool, True if they were written.
+        """
+        tags = self.batched_tags
+        self.batched_tags = None
+        self.batched_position = None
+        if not tags:
+            return True
+        status = self.__set_tags(tags)
+        self.reset_cache()
+        return status
+
     def reset_cache(self):
         """Resets any internal cache
         """
+        if self.batched_tags is not None:
+            # Nothing was written to the file yet
+            return
         self.exiftool_attributes = None
         self.exif_metadata = None
         super(Media, self).reset_cache()
@@ -329,6 +369,8 @@ class Media(Base):
             tags[self.latitude_ref_key] = 'S' if latitude < 0 else 'N'
             tags[self.longitude_ref_key] = 'W' if longitude < 0 else 'E'
 
+        if self.batched_tags is not None:
+            self.batched_position = (latitude, longitude)
         status = self.__set_tags(tags)
         self.reset_cache()
 
@@ -422,6 +464,12 @@ class Media(Base):
     def __set_tags(self, tags):
         if(not self.is_valid()):
             return None
+
+        if self.batched_tags is not None:
+            # Written by write_batched(), a later value of a tag replaces an
+            #  earlier one like when they are written one after another
+            self.batched_tags.update(tags)
+            return True
 
         source = self.source
         # Files without a date in their metadata use the modification time

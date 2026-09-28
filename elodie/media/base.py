@@ -30,6 +30,10 @@ class Base(object):
     def __init__(self, source=None):
         self.source = source
         self.deferred_writes = None
+        # Tags which are written together by write_batched(), and the
+        #  position set with them
+        self.batched_tags = None
+        self.batched_position = None
         self.reset_cache()
 
     def format_metadata(self, **kwargs):
@@ -227,13 +231,36 @@ class Base(object):
         """
         self.deferred_writes = []
 
-    def write_deferred(self, file_path):
+    def for_copy(self, file_path):
+        """A media object for a copy of this file which was not changed
+        since it was copied.
+
+        :param str file_path: Path of the copy.
+        """
+        return self.__class__(file_path)
+
+    def batch_writes(self):
+        """Write the changes of the setters together with write_batched().
+        Only media files written with ExifTool support it.
+        """
+        pass
+
+    def write_batched(self):
+        """Write the changes since batch_writes().
+
+        :returns: bool, True if they were written.
+        """
+        return True
+
+    def write_deferred(self, file_path, media=None):
         """Write the changes recorded since defer_writes() to file_path.
 
         :param str file_path: Path of the file to write the changes to.
+        :param media: Media object of file_path to use, i.e. from for_copy().
         :returns: bool, True if all changes were written.
         """
-        media = self.__class__(file_path)
+        if media is None:
+            media = self.__class__(file_path)
         status = True
         for setter, args in self.deferred_writes or []:
             status = getattr(media, setter)(*args) is True and status

@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(os.path.realp
 import helper
 from elodie.media.audio import Audio
 from elodie.media.media import Media
+from elodie.external.pyexiftool import ExifTool
 from elodie.media.photo import Photo
 from elodie.media.text import Text
 from elodie.media.video import Video
@@ -531,3 +532,42 @@ def test_get_description_which_is_a_number():
     shutil.rmtree(temporary_folder)
 
     assert description == '2019', repr(description)
+
+def test_batch_writes():
+    # The tags of the setters are written in one ExifTool call
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'plain.jpg')
+    shutil.copyfile(helper.get_file('plain.jpg'), origin)
+    photo = Photo(origin)
+    photo.batch_writes()
+
+    with mock.patch.object(ExifTool, 'set_tags', wraps=ExifTool().set_tags) as set_tags:
+        statuses = [photo.set_album('First'), photo.set_title('Title'), photo.set_album('Second')]
+        before_write = Photo(origin).get_metadata()
+        written = photo.write_batched()
+    after_write = Photo(origin).get_metadata()
+
+    assert statuses == [True, True, True], statuses
+    assert (before_write['album'], before_write['title']) == (None, None), before_write
+    assert written is True
+    assert set_tags.call_count == 1, set_tags.call_args_list
+    # The last value of a tag is written like when they are written one
+    #  after another
+    assert (after_write['album'], after_write['title']) == ('Second', 'Title'), after_write
+
+def test_for_copy_has_the_metadata_of_the_file():
+    temporary_folder, folder = helper.create_working_folder()
+    origin = os.path.join(folder, 'with-title.jpg')
+    shutil.copyfile(helper.get_file('with-title.jpg'), origin)
+    copy_path = os.path.join(folder, 'copy.jpg')
+    shutil.copyfile(origin, copy_path)
+    photo = Photo(origin)
+    photo.get_metadata()
+
+    with mock.patch.object(ExifTool, 'get_metadata') as get_metadata:
+        copy = photo.for_copy(copy_path)
+        title = copy.get_title()
+
+    assert copy.source == copy_path
+    assert title == 'Some Title', title
+    get_metadata.assert_not_called()

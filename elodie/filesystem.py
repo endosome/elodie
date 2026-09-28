@@ -1200,10 +1200,17 @@ class FileSystem(object):
         if not dest_mode & S_IWUSR:
             os.chmod(dest_path, dest_mode | S_IWUSR)
 
-        if not media.write_deferred(dest_path):
+        # The copy is not read again, it has the metadata of the source, and
+        #  it is written once: ExifTool rewrites the whole file for each
+        #  write.
+        copy = media.for_copy(dest_path)
+        copy.batch_writes()
+        deferred = bool(media.deferred_writes)
+        status = media.write_deferred(dest_path, copy)
+        copy.set_original_name(os.path.basename(source))
+        written = copy.write_batched()
+        if deferred and not (status and written):
             log.error('Could not write all metadata to %s' % dest_path)
-
-        media.__class__(dest_path).set_original_name(os.path.basename(source))
 
     def set_utime_from_metadata(self, metadata, file_path):
         """ Set the modification time on the file based on the file name.

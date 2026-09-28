@@ -2992,6 +2992,56 @@ def test_live_photo_video_is_read_once_for_its_pairing_and_import():
 
     assert 'Success                        2' in imported.output, imported.output
     assert 'Success                        2' in updated.output, updated.output
-    # The source and its copy, the file before and after it was updated
-    assert reads_of_import['.mov'] == 2, reads_of_import
+    # The source, its copy has the same metadata; the file before and after
+    #  it was updated
+    assert reads_of_import == {'.heic': 1, '.mov': 1}, reads_of_import
     assert reads_of_update['.mov'] == 2, reads_of_update
+
+def _count_exiftool_calls():
+    import collections
+    counts = collections.Counter()
+    get_metadata, set_tags = ExifTool.get_metadata, ExifTool.set_tags
+
+    def read(self, filename):
+        counts['read'] += 1
+        return get_metadata(self, filename)
+
+    def write(self, tags, filename):
+        counts['write'] += 1
+        return set_tags(self, tags, filename)
+    return counts, mock.patch.multiple(ExifTool, get_metadata=read, set_tags=write)
+
+@mock.patch.object(elodie.geolocation, 'coordinates_by_name', return_value={'latitude': 52.2297, 'longitude': 21.0122})
+@pytest.mark.parametrize('file_name', ['plain.jpg', 'photo.heic', 'video.mov'])
+@pytest.mark.parametrize('options', [[], ['--album-from-folder', '--time', '2020-06-01 12:00:00', '--location', 'Warsaw']])
+def test_import_reads_and_writes_a_file_once(mock_coordinates, file_name, options):
+    # The copy was read again and written for each change: ExifTool rewrites
+    #  the whole file for each write, which takes long for large videos
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file(file_name), os.path.join(folder, file_name))
+    counts, patched = _count_exiftool_calls()
+
+    with patched:
+        result = CliRunner().invoke(elodie._import, ['--destination', folder_destination] + options + [folder])
+
+    assert 'Success                        1' in result.output, result.output
+    assert dict(counts) == {'read': 1, 'write': 1}, dict(counts)
+
+@mock.patch.object(elodie.geolocation, 'coordinates_by_name', return_value={'latitude': 52.2297, 'longitude': 21.0122})
+def test_import_video_with_location_and_time_has_the_time_zone_of_the_location(mock_coordinates):
+    # The time zone of the date of a video is the one of its position, the
+    #  new one when both are given, not the one of the file (California)
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('video.mov'), os.path.join(folder, 'video.mov'))
+
+    result = CliRunner().invoke(elodie._import, ['--destination', folder_destination, '--location', 'Warsaw',
+                                                 '--time', '2020-06-01 12:00:00', folder])
+    video = os.path.join(folder_destination, _library_files(folder_destination)[0])
+    tags = json.loads(subprocess.run([ExifTool().executable, '-j', '-G', '-QuickTime:CreationDate', '-QuickTime:CreateDate', video],
+                                     capture_output=True).stdout)[0]
+
+    assert result.exit_code == 0, result.output
+    assert tags['QuickTime:CreationDate'] == '2020:06:01 12:00:00+02:00', tags
+    assert tags['QuickTime:CreateDate'] == '2020:06:01 10:00:00', tags

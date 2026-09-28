@@ -3061,3 +3061,27 @@ def test_batch_waits_for_another_run():
 
     assert 'Waiting for another elodie' in waiting, waiting
     assert process.returncode == 0, (output, errors)
+
+def test_import_after_a_power_failure_which_emptied_the_hash_db():
+    # The files of earlier runs are in the backup of the hash db and are
+    #  not imported again as duplicates
+    from elodie.localstorage import Db
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    shutil.copyfile(helper.get_file('plain.jpg'), os.path.join(folder, 'plain.jpg'))
+    runner = CliRunner()
+    runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    # The next run kept the backup before its periodic writes, then the
+    #  power failed
+    hash_db = Db().hash_db_path
+    Db._back_up(hash_db)
+    # Its periodic write replaced the database with an empty file
+    open(hash_db + '.new', 'w').close()
+    os.replace(hash_db + '.new', hash_db)
+    Db.reset_shared()
+
+    result = runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+
+    assert 'restored from its backup' in result.output, result.output
+    assert 'Duplicate, not imported        1' in result.output, result.output
+    assert len(_library_files(folder_destination)) == 1, _library_files(folder_destination)

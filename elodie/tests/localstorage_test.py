@@ -623,3 +623,83 @@ def test_periodic_write_does_not_depend_on_the_time_of_the_computer():
         db.update_hash_db(periodically=True)
 
     assert _read_json(constants.hash_db()) == {'key': 'value'}
+
+# A power failure during a periodic write, which is not synced to the disk,
+#  can leave the database empty or damaged on some file systems. The version
+#  of the end of the last run is kept as a backup.
+def _backup_path():
+    return constants.hash_db() + '.bak'
+
+@mock.patch('elodie.localstorage.WRITE_EVERY_CHANGES', 1)
+def test_periodic_write_keeps_the_last_durable_version_as_backup():
+    db = Db()
+    db.add_hash('first', 'value', True)
+    no_backup_after_durable_write = not os.path.exists(_backup_path())
+
+    db.add_hash('second', 'value')
+    db.update_hash_db(periodically=True)
+    backup_after_periodic_write = _read_json(_backup_path())
+    db.add_hash('third', 'value')
+    db.update_hash_db(periodically=True)
+    # Kept once for the run, not for each periodic write
+    backup_after_second_periodic_write = _read_json(_backup_path())
+    db.flush()
+    db.add_hash('fourth', 'value')
+    db.update_hash_db(periodically=True)
+
+    directory = os.path.dirname(constants.hash_db())
+    assert no_backup_after_durable_write
+    assert backup_after_periodic_write == {'first': 'value'}
+    assert backup_after_second_periodic_write == {'first': 'value'}
+    # The durable version of the flush
+    assert _read_json(_backup_path()) == {'first': 'value', 'second': 'value', 'third': 'value'}
+    assert [f for f in os.listdir(directory) if f.endswith('.tmp')] == []
+
+@pytest.mark.parametrize('content', ['', '{"cut off', '\0\0\0\0'])
+def test_damaged_hash_db_is_restored_from_its_backup(content):
+    db = Db()
+    db.add_hash('imported', '/library/a.jpg', True)
+    Db._back_up(constants.hash_db())
+    # Like a periodic write which is lost: elodie writes another file which
+    #  replaces the database
+    with open(constants.hash_db() + '.new', 'w') as f:
+        f.write(content)
+    os.replace(constants.hash_db() + '.new', constants.hash_db())
+
+    with mock.patch('elodie.log.error') as error:
+        restored = Db()
+    messages = ' '.join(c[0][0] for c in error.call_args_list)
+    restored.flush()
+
+    assert restored.hash_db == {'imported': '/library/a.jpg'}
+    assert 'restored from its backup' in messages, messages
+    # It is written again
+    assert _read_json(constants.hash_db()) == {'imported': '/library/a.jpg'}
+
+@pytest.mark.parametrize('case', ['removed', 'empty database'])
+def test_hash_db_is_not_restored_from_its_backup(case):
+    # A removed database starts a new one, i.e. to start a new library
+    db = Db()
+    db.add_hash('imported', '/library/a.jpg', True)
+    Db._back_up(constants.hash_db())
+    if case == 'removed':
+        os.remove(constants.hash_db())
+    else:
+        db.replace_hash_db({})
+        db.flush()
+
+    with mock.patch('elodie.log.error') as error:
+        new = Db()
+
+    assert new.hash_db == {}
+    error.assert_not_called()
+
+def test_backup_is_a_copy_without_hard_links():
+    # i.e. on exFAT
+    db = Db()
+    db.add_hash('imported', '/library/a.jpg', True)
+
+    with mock.patch('elodie.localstorage.os.link', side_effect=OSError(1, 'Operation not permitted')):
+        Db._back_up(constants.hash_db())
+
+    assert _read_json(_backup_path()) == {'imported': '/library/a.jpg'}

@@ -90,33 +90,34 @@ class Db(object):
         if not os.path.exists(constants.application_directory()):
             os.makedirs(constants.application_directory())
 
-        # If the hash db doesn't exist we create it.
-        # Otherwise we only open for reading
-        if not os.path.isfile(constants.hash_db()):
-            with open(constants.hash_db(), 'a'):
-                os.utime(constants.hash_db(), None)
-
-        self.hash_db = self._load(constants.hash_db(), {})
-
-        # If the location db doesn't exist we create it.
-        # Otherwise we only open for reading
-        if not os.path.isfile(constants.location_db()):
-            with open(constants.location_db(), 'a'):
-                os.utime(constants.location_db(), None)
-
-        self.location_db = self._load(constants.location_db(), [])
+        # A database which does not exist is created. One which exists is
+        #  restored from its backup when it cannot be read (see _load()).
+        restored = {}
+        for name, path, empty in (('hash', constants.hash_db(), {}),
+                                  ('location', constants.location_db(), [])):
+            existed = os.path.isfile(path)
+            if not existed:
+                with open(path, 'a'):
+                    os.utime(path, None)
+            data, restored[name] = self._load(path, empty, restore=existed)
+            setattr(self, name + '_db', data)
 
         self.hash_db_path = constants.hash_db()
         self.location_db_path = constants.location_db()
         # Changes which are not written yet. They are counted where the data
         #  changes, not in update_hash_db(), so a change is also written at
         #  the end of a run which was interrupted before its update.
-        self.pending_changes = {'hash': 0, 'location': 0}
+        # A restored database is written again
+        self.pending_changes = {name: int(restored[name])
+                                for name in ('hash', 'location')}
         # A monotonic clock, the time of the computer can jump
         self.last_write = {'hash': time.monotonic(),
                            'location': time.monotonic()}
         # Written periodically, without fsync, since the last durable write
         self.written_not_durable = {'hash': False, 'location': False}
+        # The last durable version is kept as a backup before a periodic
+        #  write replaces it, see _back_up()
+        self.backed_up = {'hash': False, 'location': False}
         # Checksums by path, see move_hashes()
         self.paths = None
 
@@ -200,25 +201,57 @@ class Db(object):
                 self._update(name, periodically=False)
 
     @staticmethod
-    def _load(path, empty):
-        """Load a database. One which cannot be read, i.e. after a crash
-        while it was written by an older version, is moved aside so it is
-        not overwritten and can be recovered.
+    def _read(path):
+        """Read a database.
+
+        :returns: its data, None if it is empty and False if it cannot be
+            read
         """
-        with open(path, 'r') as f:
-            content = f.read()
+        try:
+            with open(path, 'r') as f:
+                content = f.read()
+        except OSError:
+            return False
         if not content.strip():
-            # Created and not written yet
-            return empty
+            return None
         try:
             return json.loads(content)
         except ValueError:
+            return False
+
+    @staticmethod
+    def _load(path, empty, restore=True):
+        """Load a database. One which cannot be read, i.e. after a crash
+        while it was written by an older version, is moved aside so it is
+        not overwritten and can be recovered.
+
+        One which is empty or cannot be read, i.e. after a power failure
+        during a periodic write which is not synced to the disk, is restored
+        from its backup, the version of the end of the last run.
+
+        :param bool restore: Restore it from its backup. A database which did
+            not exist, i.e. was removed to start a new one, is not restored.
+        :returns: tuple of its data and whether it was restored
+        """
+        data = Db._read(path)
+        if data is not None and data is not False:
+            return data, False
+
+        backup = Db._read(path + '.bak') if restore else None
+        restored = backup is not None and backup is not False
+        if data is False:
             corrupt_path = '%s-corrupt-%s' % (
                 path, strftime('%Y-%m-%d_%H-%M-%S'))
             os.replace(path, corrupt_path)
-            log.error('Could not read %s, it was moved to %s and a new one '
-                      'is started' % (path, corrupt_path))
-            return empty
+            log.error('Could not read %s, it was moved to %s%s' % (
+                path, corrupt_path,
+                '' if restored else ' and a new one is started'))
+        if restored:
+            log.error('%s was empty or could not be read, it was restored '
+                      'from its backup %s.bak. The files imported after it '
+                      'was written may be imported again.' % (path, path))
+            return backup, True
+        return empty, False
 
     @staticmethod
     def _write(path, data, durable=True):
@@ -455,13 +488,42 @@ class Db(object):
         #  flush()) is durable too since fsync takes seconds for a large
         #  database.
         durable = not periodically
+        path = self.hash_db_path if name == 'hash' else self.location_db_path
+        if not durable and not self.backed_up[name]:
+            self._back_up(path)
+            self.backed_up[name] = True
         if name == 'hash':
-            self._write(self.hash_db_path, self.hash_db, durable)
+            self._write(path, self.hash_db, durable)
         else:
-            self._write(self.location_db_path, self.location_db, durable)
+            self._write(path, self.location_db, durable)
         self.pending_changes[name] = 0
         self.last_write[name] = time.monotonic()
         self.written_not_durable[name] = not durable
+        if durable:
+            # The next periodic write keeps this version as the backup
+            self.backed_up[name] = False
+
+    @staticmethod
+    def _back_up(path):
+        """Keep the durable version of a database as <path>.bak before the
+        periodic writes of a run replace it. Those are not synced to the
+        disk, after a power failure the database can be empty or damaged
+        on some file systems. A hard link keeps the version without copying
+        it, the new versions are written to other files.
+        """
+        if not os.path.isfile(path) or os.path.getsize(path) == 0:
+            return
+        backup = path + '.bak'
+        temporary_path = backup + '.tmp'
+        if os.path.exists(temporary_path):
+            os.remove(temporary_path)
+        try:
+            os.link(path, temporary_path)
+        except OSError:
+            # i.e. exFAT has no hard links
+            copyfile(path, temporary_path)
+        os.replace(temporary_path, backup)
+        _sync_directory(os.path.dirname(path) or '.')
 
 
 # The changes of the shared Db are written when elodie exits without

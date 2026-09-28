@@ -2575,3 +2575,32 @@ def test_get_all_files_skips_apple_double_files():
     files = sorted(os.path.basename(f) for f in filesystem.get_all_files(folder))
 
     assert files == ['._video.mov', 'IMG_1234.MOV'], files
+
+# gh-474: the photo of the video of a Live Photo, the reverse lookup
+def test_find_live_photo_photo():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    photo, video = helper.create_live_photo(folder)
+    other_photo, other_video = helper.create_live_photo(
+        folder, name='IMG_5555', content_identifier='SOMETHING-ELSE')
+    lonely_video = os.path.join(folder, 'IMG_7777.MOV')
+    shutil.copyfile(helper.get_file('video.mov'), lonely_video)
+
+    assert filesystem.find_live_photo_photo(video) == photo
+    # The same name but the video of another photo
+    assert filesystem.find_live_photo_photo(other_video) is None
+    assert filesystem.find_live_photo_photo(lonely_video) is None
+    # Only videos have a photo
+    assert filesystem.find_live_photo_photo(photo) is None
+
+def test_find_live_photo_photo_does_not_read_video_without_photo():
+    filesystem = FileSystem()
+    temporary_folder, folder = helper.create_working_folder()
+    video = os.path.join(folder, 'IMG_7777.MOV')
+    shutil.copyfile(helper.get_file('video.mov'), video)
+
+    with mock.patch.object(filesystem, 'get_content_identifier') as get_content_identifier:
+        found = filesystem.find_live_photo_photo(video)
+
+    assert found is None
+    assert get_content_identifier.call_count == 0

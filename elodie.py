@@ -776,6 +776,11 @@ def _update(album, location, time, title, paths, debug, dry_run):
             # Updated with its photo, reported then
             continue
         try:
+            # Given only the video of a Live Photo, its photo is updated and
+            #  the video with it, so they stay together
+            photo = FILESYSTEM.find_live_photo_photo(current_file)
+            if photo is not None:
+                current_file = photo
             status = update_file(current_file, album, location, time, title)
         except Exception as e:
             report_exception(current_file, e)

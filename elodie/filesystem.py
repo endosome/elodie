@@ -915,6 +915,43 @@ class FileSystem(object):
                 return path
         return None
 
+    def find_live_photo_photo(self, video_path):
+        """Find the photo of the video of an Apple Live Photo, the reverse
+        of find_live_photo_video(): i.e. IMG_1234.HEIC for IMG_1234.MOV.
+
+        :param str video_path: Path of the video.
+        :returns: str path of the photo or None
+        """
+        extension = os.path.splitext(video_path)[1][1:].lower()
+        if extension not in self.live_photo_video_extensions:
+            return None
+
+        # The identifier of the video is only read when there is a photo
+        #  with the same name.
+        base = os.path.splitext(os.path.basename(video_path))[0].lower()
+        directory = os.path.dirname(video_path)
+        candidates = []
+        for entry in self.list_directory(directory).get(base, []):
+            if os.path.splitext(entry)[1][1:].lower() in Photo.extensions:
+                path = os.path.join(directory, entry)
+                if os.path.isfile(path):
+                    candidates.append(path)
+        if not candidates:
+            return None
+
+        video = Video(video_path)
+        if not video.is_valid():
+            return None
+        content_identifier = self.get_content_identifier(video)
+        if content_identifier is None:
+            return None
+        for path in sorted(candidates):
+            photo = Photo(path)
+            if (photo.is_valid() and
+                    self.get_content_identifier(photo) == content_identifier):
+                return path
+        return None
+
     def get_live_photo_video_path(self, photo_dest_path, video_path):
         """Path of the video of a Live Photo next to its photo in the
         library, with the name of the photo: 2021-05-01_12-00-00-img_1234.mov

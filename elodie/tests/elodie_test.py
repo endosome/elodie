@@ -2811,6 +2811,10 @@ def test_import_and_update_an_apple_live_photo_of_an_iphone():
     photo = os.path.join(folder_destination, [f for f in library if f.endswith('.heic')][0])
     updated = CliRunner().invoke(elodie._update, ['--album', 'Sardinia', photo])
     library_after_update = _library_files(folder_destination)
+    # Only the video is given
+    video = os.path.join(folder_destination, [f for f in library_after_update if f.endswith('.mov')][0])
+    updated_by_video = CliRunner().invoke(elodie._update, ['--album', 'Alghero', video])
+    library_after_video_update = _library_files(folder_destination)
 
     assert imported.exit_code == 0, imported.output
     assert 'Success                        2' in imported.output, imported.output
@@ -2819,3 +2823,46 @@ def test_import_and_update_an_apple_live_photo_of_an_iphone():
     assert os.path.basename(library[0]).startswith('2024-09-06_18-08-07-img_4821'), library
     assert updated.exit_code == 0, updated.output
     assert [os.path.dirname(f).split(os.sep)[-1] for f in library_after_update] == ['Sardinia', 'Sardinia'], library_after_update
+    assert updated_by_video.exit_code == 0, updated_by_video.output
+    assert [os.path.dirname(f).split(os.sep)[-1] for f in library_after_video_update] == ['Alghero', 'Alghero'], library_after_video_update
+
+def test_update_live_photo_given_only_the_video():
+    # The video was moved on its own by its own date, the pair was split
+    temporary_folder, folder = helper.create_working_folder()
+    temporary_folder_destination, folder_destination = helper.create_working_folder()
+    photo, video = helper.create_live_photo(folder)
+    _set_video_date(video, '2018:01:01 12:00:00+02:00')
+    runner = CliRunner()
+    runner.invoke(elodie._import, ['--destination', folder_destination, folder])
+    video_dest = os.path.join(folder_destination, [f for f in _files_in(folder_destination) if f.endswith('.mov')][0])
+
+    result = runner.invoke(elodie._update, ['--album', 'Holidays', video_dest])
+    library = _files_in(folder_destination)
+    albums = [Media.get_class_by_file(os.path.join(folder_destination, f), [Photo, Video]).get_album() for f in library]
+
+    assert result.exit_code == 0, result.output
+    # Both are reported
+    assert 'Success                        2' in result.output, result.output
+    assert [os.path.splitext(f)[1] for f in library] == ['.heic', '.mov'], library
+    assert all(os.sep + 'Holidays' + os.sep in f for f in library), library
+    assert os.path.splitext(library[0])[0] == os.path.splitext(library[1])[0], library
+    assert albums == ['Holidays', 'Holidays'], albums
+
+def test_update_video_with_the_name_of_another_photo():
+    # The same name but the video of another photo: only the video changes
+    temporary_folder, folder = helper.create_working_folder()
+    photo, video = helper.create_live_photo(folder, content_identifier='SOMETHING-ELSE')
+    library = os.path.join(folder, 'library', '2019-05-May', 'Unknown Location')
+    os.makedirs(library)
+    photo_in_library = os.path.join(library, '2019-05-26_10-33-20-img_1234.heic')
+    video_in_library = os.path.join(library, '2019-05-26_10-33-20-img_1234.mov')
+    shutil.move(photo, photo_in_library)
+    shutil.move(video, video_in_library)
+
+    result = CliRunner().invoke(elodie._update, ['--album', 'Holidays', video_in_library])
+    files = _files_in(os.path.join(folder, 'library'))
+
+    assert result.exit_code == 0, result.output
+    assert 'Success                        1' in result.output, result.output
+    assert os.path.join('2019-05-May', 'Unknown Location', '2019-05-26_10-33-20-img_1234.heic') in files, files
+    assert any(f.startswith(os.path.join('2019-05-May', 'Holidays')) and f.endswith('.mov') for f in files), files

@@ -290,11 +290,15 @@ extensions=xmp,aae,dop
 
 A Live Photo is a photo and a short video, i.e. `IMG_1234.HEIC` and `IMG_1234.MOV`. The video is imported next to its photo with the same name, whatever its own date and location say, so the two stay together. A video belongs to a photo when it is in the same folder, has the same name ignoring case, is a `.mov` or `.mp4` and has the same `ContentIdentifier` which the iPhone writes to both.
 
-* `update` changes the video together with its photo, also when only the photo is given.
+* `update` changes the photo and the video together, also when only one of them is given.
 * With `--trash` the photo and the video are only moved to the trash when both are in the library.
 * When the photo was imported before, the video goes next to it in your library.
 * When the photo can't be imported, the video stays with it in the source and both are reported as errors, so they are imported together the next time.
 * When the photo isn't imported at all (i.e. it is excluded), the video is imported on its own.
+
+### Motion Photos and HDR photos
+
+Google and Samsung phones store a Motion Photo as one file, a photo which contains its video (`PXL_…MP.jpg`, or a `.jpg` or `.heic` of a Samsung phone). Ultra HDR photos of Android phones and HDR photos of iPhones contain a second image, a gain map. Elodie writes metadata (i.e. the original name, `--album` or `--time`) with ExifTool, which keeps the video and the gain map, so they are imported like any other photo. This is tested with Motion Photos of Google Pixel and Samsung Galaxy phones in JPEG, HEIC and HEIF and requires ExifTool 13.49 or higher (see above).
 
 ### Create your own folder structure
 

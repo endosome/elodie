@@ -225,6 +225,15 @@ class ImmichApiClient(object):
                 'isFavorite': is_favorite,
             })
 
+    def set_live_photo_video(self, asset_id, video_id):
+        """Link the photo of a Live Photo to its video."""
+        if constants.dry_run:
+            print('[DRY-RUN][Immich] Would link asset {} to its video '
+                  '{}'.format(asset_id, video_id))
+            return
+        self._request('PUT', '/assets/%s' % asset_id,
+                      json={'livePhotoVideoId': video_id})
+
     def search_assets(self, search_filter):
         """Search for assets, following all pages of the results.
 
@@ -509,11 +518,12 @@ class Sync(object):
     def log(self, message):
         self.plugin.log(message)
 
-    def library_filter(self, active=True):
+    def library_filter(self, active=True, visibility=('timeline', 'archive')):
         """Filter for the assets of the library.
 
         :param bool active: Only assets which are not offline, i.e. moved,
             and not in the trash. Immich includes both otherwise.
+        :param tuple visibility: i.e. hidden for the videos of Live Photos.
         """
         search_filter = {
             # Immich matches it ignoring case and accents, so it can find
@@ -522,7 +532,7 @@ class Sync(object):
                 'startsWith': self.plugin.external_library_path + '/'},
             # Not locked assets and not hidden ones like the video of a Live
             #  Photo which Immich shows with the photo.
-            'visibility': {'in': ['timeline', 'archive']},
+            'visibility': {'in': list(visibility)},
         }
         if active:
             search_filter['isOffline'] = {'eq': False}
@@ -547,6 +557,7 @@ class Sync(object):
                 'id': asset['id'],
                 'originalPath': asset['originalPath'],
                 'isFavorite': asset.get('isFavorite', False),
+                'livePhotoVideoId': asset.get('livePhotoVideoId'),
             }
         memberships = self.get_album_memberships()
         self.log('{} assets and {} albums in Immich'.format(
@@ -572,6 +583,7 @@ class Sync(object):
                     self.counts['assets'], len(assets)))
 
         self.apply_immich_changes()
+        self.repair_live_photos(assets, user_id)
         # Forget assets which are not in Immich anymore. The state of offline
         #  and trashed assets is kept, Immich restores them with their albums
         #  and favorite when their file is back, i.e. when a file is moved
@@ -591,6 +603,51 @@ class Sync(object):
             '{skipped} skipped, {errors} errors'.format(**self.counts))
         changed = self.counts['files_changed'] + self.counts['immich_changed']
         return (self.counts['errors'] == 0, changed)
+
+    def repair_live_photos(self, assets, user_id):
+        """Link the photos of Live Photos to their video again when the video
+        was moved. Elodie moves the video with its photo, i.e. to the folder
+        of an album. Immich links the moved photo to the video with the same
+        ContentIdentifier which it read first, which can be the old one that
+        is offline now, and the photo plays no video. gh-474
+
+        Only a link to a video of the library which is offline or in the
+        trash is repaired, to the video next to the photo with its name.
+        """
+        linked = [a for a in assets.values() if a.get('livePhotoVideoId')]
+        if not linked:
+            return
+        videos = {}
+        for asset in self.client.search_assets(
+                self.library_filter(False, visibility=('hidden',))):
+            if asset.get('ownerId') == user_id:
+                videos[asset['id']] = asset
+        by_name = {}
+        for video in videos.values():
+            if not video.get('isOffline') and not video.get('isTrashed'):
+                name = os.path.splitext(video['originalPath'])[0]
+                by_name.setdefault(name, []).append(video['id'])
+        for photo in linked:
+            # i.e. the video of a Motion Photo is not a file of the library
+            current = videos.get(photo['livePhotoVideoId'])
+            if (current is None or not (current.get('isOffline') or
+                                        current.get('isTrashed'))):
+                continue
+            candidates = by_name.get(
+                os.path.splitext(photo['originalPath'])[0], [])
+            if len(candidates) != 1:
+                continue
+            try:
+                self.client.set_live_photo_video(photo['id'], candidates[0])
+                self.counts['immich_changed'] += 1
+                self.log('Linked {} to its video {}'.format(
+                    photo['originalPath'],
+                    videos[candidates[0]]['originalPath']))
+            except ImmichError as e:
+                self.counts['errors'] += 1
+                self.plugin.display(
+                    'Could not link {} to its video: {}'.format(
+                        photo['originalPath'], e))
 
     def get_album_memberships(self):
         """Get the albums of all assets in the library.
@@ -735,6 +792,10 @@ class Sync(object):
 
         self.log('Writing albums {} and favorite {} to {}'.format(
             merged['albums'], merged['favorite'], path))
+        # The video of a Live Photo, which Immich hides and shows with its
+        #  photo, gets the same albums and favorite and stays next to the
+        #  photo. It is looked for before the photo changes. gh-474
+        video = self.plugin.filesystem.find_live_photo_video(path, media)
         if albums_changed:
             kept = [name for name in get_album_names(media.get_album())
                     if not is_album_name_storable(name)]
@@ -742,6 +803,9 @@ class Sync(object):
                 sorted(merged['albums'] + kept)))
         if favorite_changed:
             media.set_rating(FAVORITE_RATING if merged['favorite'] else '')
+        if video:
+            self.write_video_state(video, merged, albums_changed,
+                                   favorite_changed)
         # Elodie reports success also when ExifTool cannot write the file
         written = Base.get_class_by_file(path, self.subclasses)
         if not written or self.read_file_state(written) != merged:
@@ -768,11 +832,45 @@ class Sync(object):
         if new_path != path:
             self.counts['files_moved'] += 1
             self.log('Moved {} to {}'.format(path, new_path))
+            if video:
+                self.move_video(video, new_path)
             directory = os.path.dirname(path)
             self.plugin.filesystem.delete_directory_if_empty(directory)
             self.plugin.filesystem.delete_directory_if_empty(
                 os.path.dirname(directory))
         return new_path
+
+    def write_video_state(self, video, merged, albums_changed,
+                          favorite_changed):
+        """Write the albums and favorite of a photo to the video of its Live
+        Photo.
+        """
+        media = Base.get_class_by_file(video, self.subclasses)
+        if not media:
+            return
+        if albums_changed:
+            kept = [name for name in get_album_names(media.get_album())
+                    if not is_album_name_storable(name)]
+            media.set_album(ALBUM_SEPARATOR.join(
+                sorted(merged['albums'] + kept)))
+        if favorite_changed:
+            media.set_rating(FAVORITE_RATING if merged['favorite'] else '')
+
+    def move_video(self, video, photo_path):
+        """Move the video of a Live Photo next to its photo which moved."""
+        filesystem = self.plugin.filesystem
+        media = Base.get_class_by_file(video, self.subclasses)
+        new_path = filesystem.process_file(
+            video, self.plugin.elodie_library_path, media, move=True,
+            allowDuplicate=True,
+            dest_path=filesystem.get_live_photo_video_path(photo_path, video))
+        if not new_path:
+            self.plugin.display(
+                'Could not move {} next to its photo {}'.format(
+                    video, photo_path))
+            return
+        self.counts['files_moved'] += 1
+        self.log('Moved {} to {}'.format(video, new_path))
 
     def queue_immich_changes(self, asset_id, immich_state, merged):
         self.counts['immich_changed'] += 1

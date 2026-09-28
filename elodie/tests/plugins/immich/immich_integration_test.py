@@ -23,7 +23,9 @@ import helper
 from elodie import constants
 from elodie.config import load_config
 from elodie.filesystem import FileSystem
+from elodie.external.pyexiftool import ExifTool
 from elodie.media.photo import Photo
+from elodie.media.video import Video
 from elodie.plugins.immich.immich import Immich, ImmichApiClient, get_album_names
 
 ENV = {name: os.environ.get('IMMICH_TEST_' + name) for name in (
@@ -361,3 +363,61 @@ def test_albums_shared_by_other_users_are_not_synced(setup):
     assert result == (True, 1), messages
     assert second == (True, 0), messages
     assert file_state(library, 'a.jpg') == ([names('Summer')], False, path)
+
+
+def wait_for_live_photo(server, photo_name, video_name):
+    """Wait until Immich linked the photo of a Live Photo to its video."""
+    for _ in range(120):
+        assets = server.assets()
+        photo, video = assets.get(photo_name), assets.get(video_name)
+        if photo and video and photo.get('livePhotoVideoId') == video['id']:
+            return photo, video
+        time.sleep(0.5)
+    linked = photo and photo.get('livePhotoVideoId')
+    if linked:
+        linked = server.call('GET', '/assets/%s' % linked)
+        linked = (linked['originalPath'], 'offline' if linked['isOffline'] else 'online')
+    raise AssertionError('Immich linked %s to %s instead of %s' % (
+        photo and photo['originalPath'], linked, video and video['originalPath']))
+
+
+def test_live_photo_moves_with_its_video(setup):
+    # gh-474: Immich shows the video of a Live Photo with its photo and
+    #  hides it. The video gets the album of the photo and moves with it, so
+    #  Immich links the photo to it again.
+    library, server, names = setup
+    folder = os.path.join(library, '2019-05-May', 'Unknown Location')
+    os.makedirs(folder)
+    # An identifier of the test only in the photo and the video, Immich links
+    #  a Live Photo by it
+    content_identifier = str(uuid.uuid4()).upper()
+    photo_path, video_path = helper.create_live_photo(
+        folder, name='2019-05-26_10-33-20-img_1234', photo_extension='heic', video_extension='mov',
+        content_identifier=content_identifier)
+    ExifTool().execute(b'-overwrite_original', ('-MakerNotes:ContentIdentifier=%s' % content_identifier).encode(),
+                       photo_path.encode())
+    server.scan(library)
+    photo, video = wait_for_live_photo(server, 'img_1234.heic', 'img_1234.mov')
+    assert video['visibility'] == 'hidden', video
+    run_batch()
+    trip = server.call('POST', '/albums', json={'albumName': names('Trip')})
+    server.call('PUT', '/albums/%s/assets' % trip['id'], json={'ids': [photo['id']]})
+
+    run_batch()
+
+    files = sorted(os.path.relpath(os.path.join(d, f), library) for d, _, fs in os.walk(library) for f in fs)
+    assert files == [os.path.join('2019-05-May', names('Trip'), '2019-05-26_10-33-20-img_1234.' + e) for e in ('heic', 'mov')], files
+    assert get_album_names(Video(os.path.join(library, files[1])).get_album()) == [names('Trip')]
+    # Immich links the moved photo to the video with the identifier which
+    #  it read first, it can be the old one which is offline. The plugin
+    #  links it to the moved video and the photo gets its album back.
+    server.scan(library)
+    for _ in range(120):
+        assets = server.assets()
+        if (assets['img_1234.heic'].get('livePhotoVideoId') and
+                all(assets[n].get('hasMetadata') for n in ('img_1234.heic', 'img_1234.mov'))):
+            break
+        time.sleep(0.5)
+    run_batch()
+    wait_for_live_photo(server, 'img_1234.heic', 'img_1234.mov')
+    assert server.albums_of('img_1234.heic') == [names('Trip')]

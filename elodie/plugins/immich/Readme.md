@@ -75,6 +75,10 @@ Album names which can't be a folder name are not synced: names containing `;`, `
 
 A favorite in Immich is a rating of 5 in the photo (`XMP:Rating`). Removing the favorite removes the rating.
 
+### Live Photos
+
+Immich shows an Apple Live Photo as its photo and hides its video. The video gets the albums and the favorite of its photo and moves with it to the folder of an album, like `./elodie.py update` does. After a Live Photo was moved, Immich sometimes links the photo to its old video which is offline then, and the photo plays no video. The next run links it to the moved video again.
+
 ## Limitations
 
 * Only albums and favorites are synced. Immich reads descriptions, locations and dates from the photos when it scans them.

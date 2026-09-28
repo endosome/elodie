@@ -142,6 +142,11 @@ class FakeImmich(object):
             for asset_id in asset_ids:
                 self.assets[asset_id]['isFavorite'] = is_favorite
 
+    def set_live_photo_video(self, asset_id, video_id):
+        self.requests.append(('set_live_photo_video', asset_id, video_id))
+        if not constants.dry_run:
+            self.assets[asset_id]['livePhotoVideoId'] = video_id
+
     def search_assets(self, search_filter):
         self.requests.append('search_assets')
         prefix = search_filter['originalPath']['startsWith']
@@ -1057,3 +1062,112 @@ def test_asset_missing_from_a_page_of_the_search_keeps_its_state(library, immich
     run_batch(immich)
 
     assert file_state(library, 'a.jpg') == ([], False)
+
+def _create_live_photo(library):
+    # Like Elodie imports it: the video next to the photo with its name
+    folder = os.path.join(library, '2019-05-May', 'Unknown Location')
+    os.makedirs(folder)
+    photo, video = helper.create_live_photo(folder, name='2019-05-26_10-33-20-img_1234', photo_extension='heic',
+                                            video_extension='mov')
+    return photo, video
+
+def test_live_photo_video_gets_the_albums_and_favorite_of_its_photo_and_moves_with_it(library, immich):
+    # gh-474: Immich shows the video with the photo and hides it, it was
+    #  left behind without the album when the photo moved to the album folder
+    photo, video = _create_live_photo(library)
+    immich.scan()
+    immich.asset_for('img_1234.mov')['visibility'] = 'hidden'
+    run_batch(immich)
+    immich.albums[immich.add_album('Trip')]['assetIds'].add(immich.asset_for('img_1234.heic')['id'])
+    immich.asset_for('img_1234.heic')['isFavorite'] = True
+
+    result = run_batch(immich)
+    new_photo = find_file(library, 'img_1234.heic')
+    new_video = find_file(library, 'img_1234.mov')
+    video_media = Video(new_video)
+
+    assert result == (True, 1), result
+    assert os.path.basename(os.path.dirname(new_photo)) == 'Trip', new_photo
+    assert os.path.splitext(new_video)[0] == os.path.splitext(new_photo)[0], (new_photo, new_video)
+    assert not os.path.exists(video)
+    assert get_album_names(video_media.get_album()) == ['Trip']
+    assert video_media.get_rating() == 5
+
+def test_live_photo_video_gets_the_favorite_of_its_photo(library, immich):
+    # Without an album change the photo does not move, the video neither
+    photo, video = _create_live_photo(library)
+    immich.scan()
+    immich.asset_for('img_1234.mov')['visibility'] = 'hidden'
+    run_batch(immich)
+    immich.asset_for('img_1234.heic')['isFavorite'] = True
+
+    run_batch(immich)
+
+    assert os.path.exists(video)
+    assert Video(video).get_rating() == 5
+
+def _linked_live_photo(immich, library, folder):
+    """A Live Photo in a folder whose photo Immich links to its video."""
+    path = os.path.join(library, '2019-05-May', folder)
+    os.makedirs(path, exist_ok=True)
+    photo, video = helper.create_live_photo(path, name='2019-05-26_10-33-20-img_1234', photo_extension='heic',
+                                            video_extension='mov')
+    immich.scan()
+    video_asset = [a for a in immich.assets.values() if a['originalPath'].endswith(folder + '/2019-05-26_10-33-20-img_1234.mov')][0]
+    photo_asset = [a for a in immich.assets.values() if a['originalPath'].endswith(folder + '/2019-05-26_10-33-20-img_1234.heic')][0]
+    video_asset['visibility'] = 'hidden'
+    photo_asset['livePhotoVideoId'] = video_asset['id']
+    return photo, video, photo_asset, video_asset
+
+def test_live_photo_moved_is_linked_to_its_moved_video(library, immich):
+    # Immich links the moved photo to the video with the same identifier
+    #  which it read first, it can be the old one which is offline then
+    photo, video, old_photo, old_video = _linked_live_photo(immich, library, 'Old')
+    new_folder = os.path.join(library, '2019-05-May', 'New')
+    os.makedirs(new_folder)
+    shutil.move(photo, new_folder)
+    shutil.move(video, new_folder)
+    immich.scan()
+    new_photo = immich.asset_for('New/2019-05-26_10-33-20-img_1234.heic')
+    new_video = immich.asset_for('New/2019-05-26_10-33-20-img_1234.mov')
+    new_video['visibility'] = 'hidden'
+    new_photo['livePhotoVideoId'] = old_video['id']
+
+    result = run_batch(immich)
+
+    assert new_photo['livePhotoVideoId'] == new_video['id'], new_photo
+    assert ('set_live_photo_video', new_photo['id'], new_video['id']) in immich.requests
+    assert result[0] is True, result
+
+@pytest.mark.parametrize('case', ['online', 'motion photo', 'two videos'])
+def test_live_photo_link_which_is_not_repaired(library, immich, case):
+    photo, video, photo_asset, video_asset = _linked_live_photo(immich, library, 'Old')
+    if case == 'motion photo':
+        # Its video is extracted by Immich, it is not a file of the library
+        photo_asset['livePhotoVideoId'] = 'asset-of-immich'
+    elif case == 'two videos':
+        # The video it is linked to is offline but which one is its video
+        #  cannot be told
+        video_asset['isOffline'] = video_asset['isTrashed'] = True
+        other = immich.add_asset(video_asset['originalPath'].replace('.mov', '.MOV'))
+        other['visibility'] = 'hidden'
+        immich.add_asset(video_asset['originalPath'].replace('.mov', '.mp4'))['visibility'] = 'hidden'
+    linked = photo_asset['livePhotoVideoId']
+
+    run_batch(immich)
+
+    assert photo_asset['livePhotoVideoId'] == linked
+    assert not [r for r in immich.requests if r[0] == 'set_live_photo_video'], immich.requests
+
+@mock.patch('elodie.constants.dry_run', True)
+@mock.patch('builtins.print')
+def test_live_photo_link_dry_run(mock_print, library, immich):
+    photo, video, old_photo, old_video = _linked_live_photo(immich, library, 'Old')
+    old_video['isOffline'] = old_video['isTrashed'] = True
+    new_video = immich.add_asset(old_video['originalPath'].replace('/Old/', '/New/'))
+    new_video['visibility'] = 'hidden'
+    old_photo['originalPath'] = old_photo['originalPath'].replace('/Old/', '/New/')
+
+    run_batch(immich)
+
+    assert old_photo['livePhotoVideoId'] == old_video['id']

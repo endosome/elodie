@@ -92,6 +92,8 @@ docker run --rm --user "$(id -u):$(id -g)" -e TZ=Europe/Warsaw \
 
 `docker build --target dev -t elodie-dev .` builds an image with the tests: `docker run --rm elodie-dev pytest elodie/tests -n auto --dist loadgroup`.
 
+The tests do not call the MapQuest API, which is billed, and need no key. `elodie/tests/conftest.py` answers its requests with saved results (`_MQ_REVERSE` and `_MQ_FORWARD`), so a test with a new location needs an entry there. `ELODIE_LIVE_MAPQUEST=1 MAPQUEST_KEY=... pytest ...` uses the real API.
+
 Now you're ready to learn more about Elodie.
 
 <p align="center"><img src ="creative/logo@300x.png" /></p>

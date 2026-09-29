@@ -126,3 +126,80 @@ def setup_test_environment():
         module = sys.modules.get(name)
         while module is not None and module.working_folders:
             shutil.rmtree(module.working_folders.pop(), ignore_errors=True)
+
+
+# Answers of the fake MapQuest, so that the tests do not use the API, which
+#  is billed. A real key and ELODIE_LIVE_MAPQUEST=1 use the real one.
+def _mq_location(city=None, state=None, country='US', lat=0.0, lng=0.0):
+    location = {'latLng': {'lat': lat, 'lng': lng}, 'geocodeQuality': 'CITY'}
+    for i, (kind, value) in enumerate(
+            (('City', city), ('State', state), ('Country', country)), 1):
+        if value:
+            location['adminArea%dType' % i] = kind
+            location['adminArea%d' % i] = value
+    return location
+
+# Reverse lookups by latitude and longitude, rounded to 2 decimals
+_MQ_REVERSE = {
+    (37.37, -122.03): _mq_location('Sunnyvale', 'CA'),
+    (29.76, -95.37): _mq_location('Houston', 'TX'),
+    (33.66, -95.56): _mq_location('Paris', 'TX'),
+    (-33.97, 151.10): _mq_location('Sydney', 'NSW', 'AU'),
+    (37.85, -122.48): _mq_location('San Francisco', 'CA'),
+    (38.19, -119.96): _mq_location('Pinecrest', 'CA'),
+    (40.71, -74.01): _mq_location('New York', 'NY'),
+    (37.77, -122.42): _mq_location('San Francisco', 'CA'),
+    (38.5, -117.0): _mq_location(None, 'NV'),
+    (40.57, 8.32): _mq_location('Porto Torres', 'Sardinia', 'IT'),
+    (46.84, 29.62): _mq_location('Tiraspol', None, 'MD'),
+    (51.43, 12.11): _mq_location('Halle', 'Saxony-Anhalt', 'DE'),
+    (51.52, 0.16): _mq_location('Rainham', 'England', 'GB'),
+}
+
+# Forward lookups by name
+_MQ_FORWARD = {
+    'Sunnyvale, CA': _mq_location('Sunnyvale', 'CA', lat=37.37188, lng=-122.03751),
+    'San Francisco, CA': _mq_location('San Francisco', 'CA', lat=37.77493, lng=-122.41942),
+    'New York, NY': _mq_location('New York', 'NY', lat=40.71273, lng=-74.00602),
+    'Paris, Texas': _mq_location('Paris', 'TX', lat=33.6609, lng=-95.5556),
+}
+
+
+def fake_mapquest_response(url):
+    import json
+    import urllib.parse
+    import requests
+    params = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlparse(url).query).items()}
+    status, body = 200, {'info': {'statuscode': 0}}
+    if params.get('key') in (None, '', 'invalid_key'):
+        status, body = 401, {'info': {'statuscode': 403}}
+    elif 'lat' in params:
+        location = _MQ_REVERSE.get((round(float(params['lat']), 2), round(float(params['lon']), 2)))
+        if abs(float(params['lat'])) > 90 or abs(float(params['lon'])) > 180:
+            body = {'info': {'statuscode': 400}}
+        else:
+            body['results'] = [{'locations': [location or {'source': 'FALLBACK'}]}]
+    else:
+        location = _MQ_FORWARD.get(params.get('location'))
+        body['results'] = [{'locations': [location or {'source': 'FALLBACK'}]}]
+    response = requests.Response()
+    response.status_code = status
+    response._content = json.dumps(body).encode()
+    return response
+
+
+@pytest.fixture(scope="function", autouse=True)
+def fake_mapquest(monkeypatch):
+    import requests
+    if os.environ.get('ELODIE_LIVE_MAPQUEST'):
+        yield
+        return
+    real_get = requests.Session.get
+
+    def get(self, url, *args, **kwargs):
+        if url.startswith('https://www.mapquestapi.com'):
+            return fake_mapquest_response(url)
+        return real_get(self, url, *args, **kwargs)
+
+    monkeypatch.setattr(requests.Session, 'get', get)
+    yield
